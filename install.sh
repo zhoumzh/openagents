@@ -234,6 +234,25 @@ for name in agn openagents agent-connector; do
     chmod +x "$BIN_SHIM_DIR/$name"
 done
 
+# === Install openagentsui ===
+UI_DIR="$PREFIX_DIR/node_modules/openagents-launcher"
+UI_TARBALL_URL="https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/openagentsui-latest.tgz"
+
+info "Downloading OpenAgents UI from GitLab..."
+mkdir -p "$UI_DIR"
+if curl -fsSL "$UI_TARBALL_URL" | tar xz -C "$UI_DIR" --strip-components=1; then
+    info "Installing UI dependencies (Electron)..."
+    export ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
+    (cd "$UI_DIR" && "$NPM" install --omit=dev --silent || true)
+    
+    rm -f "$BIN_SHIM_DIR/openagentsui"
+    printf '#!/bin/sh\nexec "$(dirname "$0")/../../bin/node" "$(dirname "$0")/../openagents-launcher/bin/cli.js" "$@"\n' > "$BIN_SHIM_DIR/openagentsui"
+    chmod +x "$BIN_SHIM_DIR/openagentsui"
+    ok "openagentsui installed"
+else
+    warn "Failed to download openagentsui from GitLab. UI CLI will not be available."
+fi
+
 # Portable node at ~/.openagents/nodejs/bin/ is always installed above.
 # Ensure npm is also available there (tarball includes it).
 BIN_DIR="$PREFIX_DIR/bin"
@@ -347,6 +366,7 @@ fi
 echo "  Get started:"
 echo ""
 echo "    ${BOLD}agn${RESET}                         Launch the interactive dashboard"
+echo "    ${BOLD}openagentsui${RESET}                Launch the desktop GUI (Electron Launcher)"
 echo ""
 
 if [ "$agent_count" -eq 0 ]; then
