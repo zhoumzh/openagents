@@ -229,6 +229,7 @@ fi
 BIN_SHIM_DIR="$PREFIX_DIR/node_modules/.bin"
 mkdir -p "$BIN_SHIM_DIR"
 for name in agn openagents agent-connector; do
+    rm -f "$BIN_SHIM_DIR/$name"
     printf '#!/bin/sh\nexec "$(dirname "$0")/../../bin/node" "$(dirname "$0")/../@openagents-org/agent-launcher/bin/agent-connector.js" "$@"\n' > "$BIN_SHIM_DIR/$name"
     chmod +x "$BIN_SHIM_DIR/$name"
 done
