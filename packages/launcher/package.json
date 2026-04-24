@@ -3,6 +3,9 @@
   "version": "0.7.1",
   "description": "OpenAgents Launcher — install, configure, and manage your AI agents",
   "main": "src/main/main.js",
+  "bin": {
+    "openagentsui": "./bin/cli.js"
+  },
   "scripts": {
     "start": "electron .",
     "start:headless": "electron . --headless",
@@ -28,10 +31,11 @@
     "directory": "packages/launcher"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
     "electron-builder": "^25.0.0"
   },
-  "dependencies": {},
+  "dependencies": {
+    "electron": "^33.0.0"
+  },
   "build": {
     "appId": "com.openagents.launcher",
     "productName": "OpenAgents Launcher",
