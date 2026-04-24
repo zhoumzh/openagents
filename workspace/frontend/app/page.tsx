@@ -117,56 +117,33 @@ function LandingPage() {
           <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10">
             OpenAgents 将你的 AI 智能体（Claude、Codex、Aider 等）连接到共享工作区中，让它们与你实时协作，无缝互通。
           </p>
-          <div className="mt-16 grid gap-6 md:grid-cols-2 max-w-5xl mx-auto text-left">
-            {/* Desktop App Card */}
+          <div className="mt-16 max-w-2xl mx-auto text-left">
             <div className="group relative rounded-3xl border bg-card/50 backdrop-blur-xl p-8 shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 overflow-hidden flex flex-col justify-between">
               <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-transparent to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
               <div className="relative z-10 flex-1">
                 <div className="flex items-center justify-between mb-6">
                   <div className="size-12 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-md">
-                    <MonitorSmartphone className="size-6" />
-                  </div>
-                  <Badge variant="secondary" className="bg-blue-500/10 text-blue-600 dark:text-blue-400 border-none font-medium">推荐 Recommended</Badge>
-                </div>
-                <h3 className="text-2xl font-bold mb-3 tracking-tight">桌面端 (Desktop App)</h3>
-                <p className="text-muted-foreground mb-8 leading-relaxed">
-                  为绝大多数用户打造的开箱即用可视化客户端。一键自动安装运行环境，实时监控智能体状态，提供最直观、友好的管理体验。
-                </p>
-              </div>
-              <div className="relative z-10 flex flex-col gap-3">
-                <a href={`https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/OpenAgents-Launcher-${launcherVersion}-mac-arm64.zip`} className="block w-full">
-                  <Button className="w-full h-12 text-base font-medium gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg hover:shadow-blue-500/25 transition-all">
-                    <Download className="size-5" />
-                    下载 macOS (Apple Silicon 推荐)
-                  </Button>
-                </a>
-                <a href={`https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/OpenAgents-Launcher-${launcherVersion}-mac-x64.zip`} className="block w-full">
-                  <Button variant="outline" className="w-full h-12 text-base font-medium gap-2 bg-background/50 hover:bg-background shadow-sm transition-all border-blue-500/20 hover:border-blue-500/40">
-                    <Download className="size-5" />
-                    下载 macOS (Intel)
-                  </Button>
-                </a>
-              </div>
-            </div>
-
-            {/* CLI Card */}
-            <div className="group relative rounded-3xl border bg-card/50 backdrop-blur-xl p-8 shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 overflow-hidden flex flex-col justify-between">
-              <div className="absolute inset-0 bg-gradient-to-br from-zinc-500/10 via-transparent to-zinc-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-              <div className="relative z-10 flex-1">
-                <div className="flex items-center justify-between mb-6">
-                  <div className="size-12 rounded-2xl bg-gradient-to-br from-zinc-700 to-zinc-900 dark:from-zinc-600 dark:to-zinc-800 flex items-center justify-center text-white shadow-md">
                     <Terminal className="size-6" />
                   </div>
-                  <Badge variant="outline" className="font-medium text-muted-foreground border-zinc-200 dark:border-zinc-700">For Developers</Badge>
+                  <Badge variant="secondary" className="bg-blue-500/10 text-blue-600 dark:text-blue-400 border-none font-medium">一键安装</Badge>
                 </div>
-                <h3 className="text-2xl font-bold mb-3 tracking-tight">命令行 (CLI)</h3>
+                <h3 className="text-2xl font-bold mb-3 tracking-tight">OpenAgents 全家桶</h3>
                 <p className="text-muted-foreground mb-8 leading-relaxed">
-                  轻量、极速、高度可脚本化。面向开发者的纯终端管理方案，只需一行命令即可接入并管理您的智能体生态。
+                  只需执行下方的一行命令，即可同时安装底层的 CLI 管理工具和极速轻量的桌面可视化界面 (GUI)。
                 </p>
               </div>
-              <div className="relative z-10 space-y-3">
+              <div className="relative z-10 space-y-4">
                 <CodeBlock code="curl -fsSL https://gitlab.chehejia.com/zhoumingzhu/li-openagents/-/raw/master/install.sh | bash" className="shadow-inner" />
-                <CodeBlock code="openagents start claude" className="shadow-inner" />
+                <div className="grid grid-cols-2 gap-3 mt-4">
+                  <div className="rounded border bg-background/50 p-3">
+                    <p className="text-xs text-muted-foreground mb-1">启动可视化界面</p>
+                    <code className="text-sm font-mono font-medium">openagentsui</code>
+                  </div>
+                  <div className="rounded border bg-background/50 p-3">
+                    <p className="text-xs text-muted-foreground mb-1">命令行启动智能体</p>
+                    <code className="text-sm font-mono font-medium">openagents start claude</code>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
