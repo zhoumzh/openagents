@@ -3,4 +3,4 @@
 # Redirects to the unified installer at openagents.org
 # Usage: curl -fsSL https://workspace.openagents.org/install.sh | bash
 
-exec bash <(curl -fsSL https://openagents.org/install.sh)
+exec bash <(curl -fsSL https://gitlab.chehejia.com/zhoumingzhu/li-openagents/-/raw/master/install.sh)

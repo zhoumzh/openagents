@@ -3,7 +3,7 @@ set -euo pipefail
 
 # =============================================================================
 # OpenAgents Installer
-# Usage: curl -fsSL https://openagents.org/install.sh | bash
+# Usage: curl -fsSL https://gitlab.chehejia.com/zhoumingzhu/li-openagents/-/raw/master/install.sh | bash
 #
 # Installs the OpenAgents CLI (openagents), detects local AI agents,
 # and tells the user how to get started.
@@ -192,48 +192,46 @@ fi
 # Install to ~/.openagents/nodejs/node_modules/ via direct tarball (avoids npm --prefix pruning)
 PREFIX_DIR="$HOME/.openagents/nodejs"
 CORE_DIR="$PREFIX_DIR/node_modules/@openagents-org/agent-launcher"
-LATEST_VER=$($NPM view "$NPM_PACKAGE" version 2>/dev/null || echo "")
-INSTALLED_VER=""
-if [ -f "$CORE_DIR/package.json" ]; then
-    INSTALLED_VER=$(node -e "try{console.log(require('$CORE_DIR/package.json').version)}catch{}" 2>/dev/null || echo "")
-fi
 
-if [ -n "$LATEST_VER" ] && [ "$LATEST_VER" != "$INSTALLED_VER" ]; then
-    TARBALL_URL="https://registry.npmjs.org/$NPM_PACKAGE/-/agent-launcher-${LATEST_VER}.tgz"
-    mkdir -p "$CORE_DIR"
-    curl -fsSL "$TARBALL_URL" | tar xz -C "$CORE_DIR" --strip-components=1
-    # Install blessed (TUI dep) via direct tarball — avoids npm --prefix pruning other packages
-    BLESSED_DIR="$PREFIX_DIR/node_modules/blessed"
-    if [ ! -f "$BLESSED_DIR/package.json" ]; then
-        BLESSED_VER=$($NPM view blessed version 2>/dev/null || echo "0.1.81")
-        mkdir -p "$BLESSED_DIR"
-        curl -fsSL "https://registry.npmjs.org/blessed/-/blessed-${BLESSED_VER}.tgz" | tar xz -C "$BLESSED_DIR" --strip-components=1
-    fi
-    # Create package.json at prefix so future npm --save --prefix installs don't prune core packages
-    if [ ! -f "$PREFIX_DIR/package.json" ]; then
-        printf '{"private":true,"dependencies":{"%s":"%s","blessed":"%s"}}\n' \
-            "$NPM_PACKAGE" "$LATEST_VER" "${BLESSED_VER:-0.1.81}" > "$PREFIX_DIR/package.json"
-    else
-        # Update existing package.json to include core deps
-        node -e "
-            const f='$PREFIX_DIR/package.json';
-            const p=JSON.parse(require('fs').readFileSync(f,'utf-8'));
-            p.dependencies=p.dependencies||{};
-            p.dependencies['$NPM_PACKAGE']='$LATEST_VER';
-            if(!p.dependencies.blessed)p.dependencies.blessed='${BLESSED_VER:-0.1.81}';
-            require('fs').writeFileSync(f,JSON.stringify(p));
-        " 2>/dev/null
-    fi
-    # Create bin shims (tarball install doesn't create .bin entries)
-    BIN_SHIM_DIR="$PREFIX_DIR/node_modules/.bin"
-    mkdir -p "$BIN_SHIM_DIR"
-    for name in agn openagents agent-connector; do
-        printf '#!/bin/sh\nexec "$(dirname "$0")/../../bin/node" "$(dirname "$0")/../@openagents-org/agent-launcher/bin/agent-connector.js" "$@"\n' > "$BIN_SHIM_DIR/$name"
-        chmod +x "$BIN_SHIM_DIR/$name"
-    done
-elif [ -n "$INSTALLED_VER" ]; then
-    info "Already up to date ($INSTALLED_VER)"
+# 从内部 GitLab Package Registry 拉取最新打包的 tgz
+TARBALL_URL="https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/agent-launcher-latest.tgz"
+
+info "Downloading core components from GitLab..."
+mkdir -p "$CORE_DIR"
+curl -fsSL "$TARBALL_URL" | tar xz -C "$CORE_DIR" --strip-components=1
+
+# 动态获取刚下载下来的包版本号
+LATEST_VER=$(node -e "try{console.log(require('$CORE_DIR/package.json').version)}catch{}" 2>/dev/null || echo "latest")
+
+# Install blessed (TUI dep) via direct tarball — avoids npm --prefix pruning other packages
+BLESSED_DIR="$PREFIX_DIR/node_modules/blessed"
+if [ ! -f "$BLESSED_DIR/package.json" ]; then
+    BLESSED_VER=$($NPM view blessed version 2>/dev/null || echo "0.1.81")
+    mkdir -p "$BLESSED_DIR"
+    curl -fsSL "https://registry.npmjs.org/blessed/-/blessed-${BLESSED_VER}.tgz" | tar xz -C "$BLESSED_DIR" --strip-components=1
 fi
+# Create package.json at prefix so future npm --save --prefix installs don't prune core packages
+if [ ! -f "$PREFIX_DIR/package.json" ]; then
+    printf '{"private":true,"dependencies":{"%s":"%s","blessed":"%s"}}\n' \
+        "$NPM_PACKAGE" "$LATEST_VER" "${BLESSED_VER:-0.1.81}" > "$PREFIX_DIR/package.json"
+else
+    # Update existing package.json to include core deps
+    node -e "
+        const f='$PREFIX_DIR/package.json';
+        const p=JSON.parse(require('fs').readFileSync(f,'utf-8'));
+        p.dependencies=p.dependencies||{};
+        p.dependencies['$NPM_PACKAGE']='$LATEST_VER';
+        if(!p.dependencies.blessed)p.dependencies.blessed='${BLESSED_VER:-0.1.81}';
+        require('fs').writeFileSync(f,JSON.stringify(p));
+    " 2>/dev/null
+fi
+# Create bin shims (tarball install doesn't create .bin entries)
+BIN_SHIM_DIR="$PREFIX_DIR/node_modules/.bin"
+mkdir -p "$BIN_SHIM_DIR"
+for name in agn openagents agent-connector; do
+    printf '#!/bin/sh\nexec "$(dirname "$0")/../../bin/node" "$(dirname "$0")/../@openagents-org/agent-launcher/bin/agent-connector.js" "$@"\n' > "$BIN_SHIM_DIR/$name"
+    chmod +x "$BIN_SHIM_DIR/$name"
+done
 
 # Portable node at ~/.openagents/nodejs/bin/ is always installed above.
 # Ensure npm is also available there (tarball includes it).

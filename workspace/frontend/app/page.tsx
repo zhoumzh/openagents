@@ -73,23 +73,23 @@ function LandingPage() {
               href="https://openagents.org/docs/getting-started/overview"
               className="text-sm text-muted-foreground hover:text-foreground transition-colors hidden sm:inline"
             >
-              Docs
+              文档
             </a>
             <a
               href="https://github.com/openagents-org/openagents"
               className="text-sm text-muted-foreground hover:text-foreground transition-colors hidden sm:inline"
             >
-              GitHub
+              代码库
             </a>
             <a
               href="https://discord.gg/openagents"
               className="text-sm text-muted-foreground hover:text-foreground transition-colors hidden sm:inline"
             >
-              Discord
+              交流群
             </a>
             {isOpenAgentsDomain && (
               <Button size="sm" variant="outline" onClick={signIn}>
-                Sign In
+                登录
               </Button>
             )}
           </div>
@@ -100,19 +100,58 @@ function LandingPage() {
       <section className="py-16 sm:py-24">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 text-center">
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight mb-4">
-            Your agents, working together
+            你的智能体，协作无间
           </h1>
           <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10">
-            OpenAgents connects your AI agents — Claude, Codex, Aider, and more — into
-            shared workspaces where they collaborate with each other and with you, in real time.
+            OpenAgents 将你的 AI 智能体（Claude、Codex、Aider 等）连接到共享工作区中，让它们与你实时协作，无缝互通。
           </p>
-          <div className="max-w-lg mx-auto space-y-3">
-            <CodeBlock code="curl -fsSL https://openagents.org/install.sh | bash" />
-            <CodeBlock code="openagents start claude" />
+          <div className="mt-16 grid gap-6 md:grid-cols-2 max-w-5xl mx-auto text-left">
+            {/* Desktop App Card */}
+            <div className="group relative rounded-3xl border bg-card/50 backdrop-blur-xl p-8 shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 overflow-hidden flex flex-col justify-between">
+              <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-transparent to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+              <div className="relative z-10 flex-1">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="size-12 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-md">
+                    <MonitorSmartphone className="size-6" />
+                  </div>
+                  <Badge variant="secondary" className="bg-blue-500/10 text-blue-600 dark:text-blue-400 border-none font-medium">推荐 Recommended</Badge>
+                </div>
+                <h3 className="text-2xl font-bold mb-3 tracking-tight">桌面端 (Desktop App)</h3>
+                <p className="text-muted-foreground mb-8 leading-relaxed">
+                  为绝大多数用户打造的开箱即用可视化客户端。一键自动安装运行环境，实时监控智能体状态，提供最直观、友好的管理体验。
+                </p>
+              </div>
+              <div className="relative z-10">
+                <a href="https://gitlab.chehejia.com/zhoumingzhu/li-openagents/-/packages" target="_blank" rel="noreferrer" className="block w-full">
+                  <Button className="w-full h-12 text-base font-medium gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg hover:shadow-blue-500/25 transition-all">
+                    <Download className="size-5" />
+                    下载 macOS 桌面端
+                  </Button>
+                </a>
+              </div>
+            </div>
+
+            {/* CLI Card */}
+            <div className="group relative rounded-3xl border bg-card/50 backdrop-blur-xl p-8 shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 overflow-hidden flex flex-col justify-between">
+              <div className="absolute inset-0 bg-gradient-to-br from-zinc-500/10 via-transparent to-zinc-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+              <div className="relative z-10 flex-1">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="size-12 rounded-2xl bg-gradient-to-br from-zinc-700 to-zinc-900 dark:from-zinc-600 dark:to-zinc-800 flex items-center justify-center text-white shadow-md">
+                    <Terminal className="size-6" />
+                  </div>
+                  <Badge variant="outline" className="font-medium text-muted-foreground border-zinc-200 dark:border-zinc-700">For Developers</Badge>
+                </div>
+                <h3 className="text-2xl font-bold mb-3 tracking-tight">命令行 (CLI)</h3>
+                <p className="text-muted-foreground mb-8 leading-relaxed">
+                  轻量、极速、高度可脚本化。面向开发者的纯终端管理方案，只需一行命令即可接入并管理您的智能体生态。
+                </p>
+              </div>
+              <div className="relative z-10 space-y-3">
+                <CodeBlock code="curl -fsSL https://gitlab.chehejia.com/zhoumingzhu/li-openagents/-/raw/master/install.sh | bash" className="shadow-inner" />
+                <CodeBlock code="openagents start claude" className="shadow-inner" />
+              </div>
+            </div>
           </div>
-          <p className="mt-4 text-sm text-muted-foreground">
-            Install in seconds. Works on macOS, Linux, and Windows.
-          </p>
         </div>
       </section>
 
@@ -120,42 +159,42 @@ function LandingPage() {
       <section className="py-16 border-t">
         <div className="max-w-5xl mx-auto px-4 sm:px-6">
           <h2 className="text-2xl sm:text-3xl font-bold text-center mb-12">
-            Get started in three steps
+            简单三步，即可开始
           </h2>
           <div className="grid gap-8 md:grid-cols-3">
             {/* Step 1 */}
             <div className="space-y-3">
               <div className="flex items-center gap-3">
                 <div className="size-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-bold shrink-0">1</div>
-                <h3 className="font-semibold text-lg">Create a workspace</h3>
+                <h3 className="font-semibold text-lg">创建工作区</h3>
               </div>
               <CodeBlock code="openagents workspace create" />
               <p className="text-sm text-muted-foreground">
-                Creates a workspace and gives you a shareable token. Share it with teammates or other agents.
+                创建一个工作区并获取邀请口令，你可以分享给团队成员或其他智能体。
               </p>
             </div>
             {/* Step 2 */}
             <div className="space-y-3">
               <div className="flex items-center gap-3">
                 <div className="size-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-bold shrink-0">2</div>
-                <h3 className="font-semibold text-lg">Connect your agents</h3>
+                <h3 className="font-semibold text-lg">连接智能体</h3>
               </div>
               <CodeBlock code={`openagents start openclaw\nopenagents start claude`} />
               <p className="text-sm text-muted-foreground">
-                Start any supported agent and it auto-connects to your workspace. Run as many as you need.
+                启动任意支持的智能体，它会自动连接到你的工作区。按需运行任意多个智能体。
               </p>
             </div>
             {/* Step 3 */}
             <div className="space-y-3">
               <div className="flex items-center gap-3">
                 <div className="size-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-bold shrink-0">3</div>
-                <h3 className="font-semibold text-lg">Collaborate</h3>
+                <h3 className="font-semibold text-lg">开始协作</h3>
               </div>
               <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
-                Your agents and teammates appear here in a shared workspace — exchanging messages, sharing files, and working on tasks together.
+                你的智能体和团队成员将汇聚在共享工作区中 —— 实时交流、共享文件、协同完成任务。
               </div>
               <p className="text-sm text-muted-foreground">
-                Open your workspace at <span className="font-mono text-foreground">openagents.org/workspace</span> to see everything in real time.
+                在页面顶部登录并打开工作区，即可实时查看所有动态与进展。
               </p>
             </div>
           </div>
@@ -166,10 +205,10 @@ function LandingPage() {
       <section className="py-16 border-t">
         <div className="max-w-5xl mx-auto px-4 sm:px-6">
           <h2 className="text-2xl sm:text-3xl font-bold text-center mb-3">
-            Supported agents
+            支持的智能体
           </h2>
           <p className="text-center text-muted-foreground mb-10 max-w-xl mx-auto">
-            Connect any of these agents to your workspace with a single command. More agents are added regularly.
+            只需一行命令，即可将以下任意智能体连接到你的工作区。更多智能体正在持续添加中。
           </p>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {agents.map((agent) => (
@@ -190,7 +229,7 @@ function LandingPage() {
             ))}
           </div>
           <p className="text-center text-sm text-muted-foreground mt-6">
-            Search for more: <code className="bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-xs font-mono">openagents search coding</code>
+            探索更多： <code className="bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-xs font-mono">openagents search coding</code>
           </p>
         </div>
       </section>
@@ -199,28 +238,28 @@ function LandingPage() {
       <section className="py-16 border-t">
         <div className="max-w-5xl mx-auto px-4 sm:px-6">
           <h2 className="text-2xl sm:text-3xl font-bold text-center mb-12">
-            Why OpenAgents
+            为什么选择 OpenAgents
           </h2>
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
             <FeatureCard
               icon={<Network className="size-5" />}
-              title="Agent Networks"
-              description="Agents discover, communicate, and collaborate in shared environments — hosted or self-hosted."
+              title="智能体网络"
+              description="智能体在共享环境（云托管或私有化部署）中自动发现、沟通与协作。"
             />
             <FeatureCard
               icon={<Zap className="size-5" />}
-              title="One-Command Setup"
-              description="openagents start claude creates, configures, and runs your agent. Background daemon auto-restarts on crash."
+              title="一键启动部署"
+              description="运行 openagents start 命令即可完成智能体的创建、配置和运行。后台守护进程支持崩溃后自动重启。"
             />
             <FeatureCard
               icon={<Shield className="size-5" />}
-              title="Protocol Support"
-              description="Native MCP and A2A support. Also works with gRPC, WebSocket, and HTTP."
+              title="多协议支持"
+              description="原生支持 MCP 和 A2A 协议。同时兼容 gRPC、WebSocket 和 HTTP。"
             />
             <FeatureCard
               icon={<MonitorSmartphone className="size-5" />}
-              title="Cross-Platform"
-              description="macOS (launchd), Linux (systemd), Windows (Task Scheduler). Works everywhere."
+              title="跨平台支持"
+              description="全面支持 macOS (launchd)、Linux (systemd) 以及 Windows (任务计划程序)，无处不在。"
             />
           </div>
         </div>
@@ -230,28 +269,28 @@ function LandingPage() {
       <section className="py-16 border-t">
         <div className="max-w-3xl mx-auto px-4 sm:px-6">
           <h2 className="text-2xl sm:text-3xl font-bold text-center mb-10">
-            CLI quick reference
+            命令行 (CLI) 快速参考
           </h2>
           <div className="space-y-6">
-            <CLIGroup title="Agent Management" commands={[
-              { cmd: 'openagents', desc: 'Scan machine, show agent status' },
-              { cmd: 'openagents start <type>', desc: 'Start an agent (create + workspace prompt + daemon)' },
-              { cmd: 'openagents stop <name>', desc: 'Stop a specific agent' },
-              { cmd: 'openagents status', desc: 'Show running agents and daemon health' },
-              { cmd: 'openagents install <type>', desc: 'Install an agent runtime' },
-              { cmd: 'openagents search <query>', desc: 'Search available agents' },
+            <CLIGroup title="智能体管理" commands={[
+              { cmd: 'openagents', desc: '扫描机器，显示智能体状态' },
+              { cmd: 'openagents start <type>', desc: '启动智能体（包含创建、加入工作区及后台运行）' },
+              { cmd: 'openagents stop <name>', desc: '停止指定的智能体' },
+              { cmd: 'openagents status', desc: '显示正在运行的智能体及守护进程健康状态' },
+              { cmd: 'openagents install <type>', desc: '安装智能体运行环境' },
+              { cmd: 'openagents search <query>', desc: '搜索可用的智能体' },
             ]} />
-            <CLIGroup title="Daemon" commands={[
-              { cmd: 'openagents up', desc: 'Start daemon (all configured agents)' },
-              { cmd: 'openagents down', desc: 'Stop daemon' },
-              { cmd: 'openagents autostart', desc: 'Auto-start on login' },
-              { cmd: 'openagents logs -f', desc: 'Follow logs in real time' },
+            <CLIGroup title="守护进程" commands={[
+              { cmd: 'openagents up', desc: '启动守护进程（运行所有已配置的智能体）' },
+              { cmd: 'openagents down', desc: '停止守护进程' },
+              { cmd: 'openagents autostart', desc: '设置开机自启动' },
+              { cmd: 'openagents logs -f', desc: '实时查看运行日志' },
             ]} />
-            <CLIGroup title="Workspace" commands={[
-              { cmd: 'openagents workspace create', desc: 'Create a workspace, get shareable token' },
-              { cmd: 'openagents workspace join <token>', desc: 'Join with a token' },
-              { cmd: 'openagents workspace list', desc: 'List configured workspaces' },
-              { cmd: 'openagents workspace members', desc: 'List agents in a workspace' },
+            <CLIGroup title="工作区" commands={[
+              { cmd: 'openagents workspace create', desc: '创建工作区并获取邀请口令' },
+              { cmd: 'openagents workspace join <token>', desc: '使用邀请口令加入工作区' },
+              { cmd: 'openagents workspace list', desc: '列出本地配置的工作区' },
+              { cmd: 'openagents workspace members', desc: '列出工作区中的智能体成员' },
             ]} />
           </div>
         </div>
@@ -260,26 +299,26 @@ function LandingPage() {
       {/* ── CTA ── */}
       <section className="py-20 border-t">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 text-center space-y-6">
-          <h2 className="text-2xl sm:text-3xl font-bold">Ready to get started?</h2>
+          <h2 className="text-2xl sm:text-3xl font-bold">准备好开始了吗？</h2>
           <p className="text-muted-foreground">
-            Install OpenAgents and have your first agent running in under a minute.
+            立刻在内网安装并启动你的第一个智能体。
           </p>
-          <CodeBlock code="curl -fsSL https://openagents.org/install.sh | bash && openagents start claude" className="max-w-xl mx-auto" />
+          <CodeBlock code="curl -fsSL https://gitlab.chehejia.com/zhoumingzhu/li-openagents/-/raw/master/install.sh | bash && openagents start claude" className="max-w-xl mx-auto" />
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
             <a href="https://openagents.org/docs/getting-started/overview">
               <Button>
-                Read the Docs
+                阅读文档
                 <ArrowRight className="size-4 ml-1" />
               </Button>
             </a>
             <a href="https://github.com/openagents-org/openagents">
               <Button variant="outline">
-                View on GitHub
+                查看代码库
               </Button>
             </a>
             <a href="https://discord.gg/openagents">
               <Button variant="outline">
-                Join Discord
+                加入交流群
               </Button>
             </a>
           </div>
@@ -294,10 +333,10 @@ function LandingPage() {
             <span>OpenAgents</span>
           </div>
           <div className="flex items-center gap-4">
-            <a href="https://openagents.org" className="hover:text-foreground transition-colors">Website</a>
-            <a href="https://openagents.org/docs/getting-started/overview" className="hover:text-foreground transition-colors">Docs</a>
-            <a href="https://github.com/openagents-org/openagents" className="hover:text-foreground transition-colors">GitHub</a>
-            <a href="https://discord.gg/openagents" className="hover:text-foreground transition-colors">Discord</a>
+            <a href="https://openagents.org" className="hover:text-foreground transition-colors">官网</a>
+            <a href="https://openagents.org/docs/getting-started/overview" className="hover:text-foreground transition-colors">文档</a>
+            <a href="https://github.com/openagents-org/openagents" className="hover:text-foreground transition-colors">代码库</a>
+            <a href="https://discord.gg/openagents" className="hover:text-foreground transition-colors">社区</a>
             <a href="https://twitter.com/OpenAgentsAI" className="hover:text-foreground transition-colors">Twitter</a>
           </div>
         </div>
@@ -361,7 +400,7 @@ function CreateWorkspaceForm({
       onCreated();
       router.push(`/${ws.slug}?token=${ws.token}`);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to create workspace');
+      setError(err instanceof Error ? err.message : '创建工作区失败');
       setLoading(false);
     }
   };
@@ -370,17 +409,17 @@ function CreateWorkspaceForm({
     <Card className="border-dashed">
       <CardContent className="p-4">
         <form onSubmit={handleSubmit} className="space-y-3">
-          <h3 className="font-medium text-sm">New Workspace</h3>
+          <h3 className="font-medium text-sm">新建工作区</h3>
           <div className="space-y-2">
             <Input
-              placeholder="Agent name (required)"
+              placeholder="智能体名称（必填）"
               value={agentName}
               onChange={(e) => setAgentName(e.target.value)}
               required
               autoFocus
             />
             <Input
-              placeholder="Workspace name (optional)"
+              placeholder="工作区名称（选填）"
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
@@ -389,10 +428,10 @@ function CreateWorkspaceForm({
           <div className="flex gap-2">
             <Button type="submit" size="sm" disabled={loading}>
               {loading ? <Loader2 className="size-3 animate-spin mr-1" /> : <Plus className="size-3 mr-1" />}
-              Create
+              创建
             </Button>
             <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
-              Cancel
+              取消
             </Button>
           </div>
         </form>
@@ -427,7 +466,7 @@ function WorkspaceCard({ workspace }: { workspace: WorkspaceSummary }) {
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           <span className="flex items-center gap-1">
             <Users className="size-3" />
-            {workspace.agentCount} agent{workspace.agentCount !== 1 ? 's' : ''}
+            {workspace.agentCount} 个智能体
           </span>
           {workspace.lastActivityAt && (
             <span className="flex items-center gap-1">
@@ -459,7 +498,7 @@ function Dashboard() {
       const data = await listMyWorkspaces();
       setWorkspaces(data.items);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to load workspaces');
+      setError(err instanceof Error ? err.message : '加载工作区失败');
     } finally {
       setLoading(false);
     }
@@ -476,7 +515,7 @@ function Dashboard() {
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Bot className="size-5 text-primary" />
-            <h1 className="font-semibold">Workspaces</h1>
+            <h1 className="font-semibold">我的工作区</h1>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-muted-foreground hidden sm:inline">{user?.email}</span>
@@ -492,12 +531,12 @@ function Dashboard() {
         {/* Actions bar */}
         <div className="flex items-center justify-between mb-6">
           <p className="text-sm text-muted-foreground">
-            {loading ? 'Loading...' : `${workspaces.length} workspace${workspaces.length !== 1 ? 's' : ''}`}
+            {loading ? '加载中...' : `${workspaces.length} 个工作区`}
           </p>
           {!showCreate && (
             <Button size="sm" onClick={() => setShowCreate(true)}>
               <Plus className="size-4 mr-1" />
-              New Workspace
+              新建工作区
             </Button>
           )}
         </div>
@@ -529,9 +568,9 @@ function Dashboard() {
         ) : workspaces.length === 0 ? (
           <div className="text-center py-20 space-y-3">
             <Bot className="size-10 mx-auto text-muted-foreground/40" />
-            <p className="text-muted-foreground">No workspaces yet</p>
+            <p className="text-muted-foreground">暂无工作区</p>
             <p className="text-sm text-muted-foreground/70">
-              Create one or claim an anonymous workspace via the CLI
+              点击新建，或通过命令行 (CLI) 认领匿名工作区
             </p>
           </div>
         ) : (

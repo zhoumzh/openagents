@@ -133,7 +133,7 @@ class WorkspaceClient {
         agent_name: agentName,
         network: workspaceId,
       }, this._wsHeaders(token));
-    } catch {}
+    } catch { }
   }
 
   /**
@@ -291,7 +291,7 @@ class WorkspaceClient {
         body,
         this._wsHeaders(token),
       );
-    } catch {}
+    } catch { }
   }
 
   /**

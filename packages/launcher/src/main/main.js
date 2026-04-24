@@ -206,32 +206,15 @@ async function ensureCoreLibrary() {
   }
 
   // Always try to update to latest on startup
-  // Use direct tarball download — avoids npm --prefix which prunes npm itself
+  // Use direct tarball download from GitLab
   const https = require('https');
   try {
-    // Check latest version from registry
-    const latestVersion = await new Promise((res, rej) => {
-      https.get(`https://registry.npmjs.org/${CORE_PKG}/latest`, r => {
-        let d = ''; r.on('data', c => d += c);
-        r.on('end', () => { try { res(JSON.parse(d).version); } catch { rej(new Error('parse error')); } });
-      }).on('error', rej);
-    });
-
     if (!installedVersion) {
-      slog('Core library not found — installing v' + latestVersion + '...');
-      if (_updateSplash) _updateSplash('Installing core library...', 65, 'v' + latestVersion);
-    } else if (latestVersion !== installedVersion) {
-      slog('Core library v' + installedVersion + ' → v' + latestVersion + ' update available');
-      if (_updateSplash) _updateSplash('Updating core library...', 65, 'v' + installedVersion + ' → v' + latestVersion);
-    } else {
-      slog('Core library v' + installedVersion + ' (already latest)');
-      if (_updateSplash) _updateSplash('Core library up to date', 80, 'v' + installedVersion);
-    }
-
-    if (!installedVersion || latestVersion !== installedVersion) {
-      // Download and extract tarball directly — no npm needed
-      const tgzUrl = `https://registry.npmjs.org/${CORE_PKG}/-/agent-launcher-${latestVersion}.tgz`;
-      const tgzPath = path.join(os.tmpdir(), `agent-launcher-${latestVersion}.tgz`);
+      slog('Core library not found — installing from GitLab...');
+      if (_updateSplash) _updateSplash('Installing core library...', 65, 'GitLab Latest');
+      
+      const tgzUrl = 'https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/agent-launcher-latest.tgz';
+      const tgzPath = path.join(os.tmpdir(), `agent-launcher-latest.tgz`);
       const destDir = path.join(GLOBAL_MODULES, CORE_PKG);
 
       await downloadFile(https, tgzUrl, tgzPath, null);
@@ -249,22 +232,12 @@ async function ensureCoreLibrary() {
         // Register in prefix package.json so npm --prefix won't prune it
         _addToPrefixPackageJson(CORE_PKG, newVersion);
       }
+    } else {
+      slog('Core library v' + installedVersion + ' (already installed)');
+      if (_updateSplash) _updateSplash('Core library ready', 80, 'v' + installedVersion);
     }
   } catch (e) {
-    slog('Core update failed: ' + e.message);
-    if (!installedVersion) {
-      slog('Falling back to npm...');
-      const npmCmd = findNpmCommand();
-      if (npmCmd) {
-        try {
-          execSync(`${npmCmd} install --prefix "${PORTABLE_NODE_DIR}" ${CORE_PKG}@latest --ignore-scripts`, {
-            stdio: 'pipe', timeout: 120000,
-            env: { ...process.env, PATH: PORTABLE_NODE_DIR + (process.platform === 'win32' ? ';' : ':') + (process.env.PATH || '') },
-          });
-          try { installedVersion = JSON.parse(fs.readFileSync(corePkgPath, 'utf-8')).version; } catch {}
-        } catch {}
-      }
-    }
+    slog('Core install from GitLab failed: ' + e.message);
   }
 
   coreVersion = installedVersion;
@@ -295,25 +268,9 @@ async function ensureCoreLibrary() {
 }
 
 async function checkCoreUpdate() {
-  const npmCmd = findNpmCommand();
-  if (!npmCmd) {
-    slog('checkCoreUpdate: skipped — npm not found');
-    return;
-  }
-  slog('checkCoreUpdate: using ' + npmCmd);
-  try {
-    const latest = execSync(`${npmCmd} view ${CORE_PKG} version`, {
-      encoding: 'utf-8', timeout: 15000,
-      env: { ...process.env, PATH: PORTABLE_NODE_DIR + (process.platform === 'win32' ? ';' : ':') + (process.env.PATH || '') },
-    }).trim();
-
-    if (coreVersion && latest && latest !== coreVersion) {
-      // Send update info to renderer (shown in sidebar, not a popup)
-      if (mainWindow) {
-        mainWindow.webContents.send('core-update-available', { current: coreVersion, latest });
-      }
-    }
-  } catch {}
+  // GitLab 二开模式下，通过手动重新运行 install.sh 或点击前端页面下载覆盖来更新。
+  // 取消自动从 NPM 检查更新，避免覆盖内部包。
+  slog('checkCoreUpdate: skipped — using internal GitLab distribution');
 }
 
 function createWindow() {
@@ -567,15 +524,20 @@ function setupIPC() {
   // Health check
   ipcMain.handle('agents:health-check', (_e, type) => agentManager.healthCheck(type));
 
-  // Core library update
+  // Core library update (Force update from GitLab)
   ipcMain.handle('core:update', async () => {
-    const npmUnified = path.join(PORTABLE_NODE_DIR, process.platform === 'win32' ? 'npm.cmd' : 'npm');
-    const npmBin = fs.existsSync(npmUnified) ? npmUnified : path.join(PORTABLE_NODE_DIR, 'bin', 'npm');
     try {
-      execSync(`"${npmBin}" install --prefix "${PORTABLE_NODE_DIR}" ${CORE_PKG}@latest --ignore-scripts`, {
-        stdio: 'ignore', timeout: 120000,
-        env: { ...process.env, PATH: PORTABLE_NODE_DIR + (process.platform === 'win32' ? ';' : ':') + (process.env.PATH || '') },
-      });
+      const https = require('https');
+      const tgzUrl = 'https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/agent-launcher-latest.tgz';
+      const tgzPath = path.join(os.tmpdir(), `agent-launcher-latest.tgz`);
+      const destDir = path.join(GLOBAL_MODULES, CORE_PKG);
+      
+      await downloadFile(https, tgzUrl, tgzPath, null);
+      try { fs.rmSync(destDir, { recursive: true, force: true }); } catch {}
+      fs.mkdirSync(destDir, { recursive: true });
+      execSync(`tar -xzf "${tgzPath}" -C "${destDir}" --strip-components=1`, { timeout: 60000, stdio: 'pipe' });
+      try { fs.unlinkSync(tgzPath); } catch {}
+      
       const corePkgPath = path.join(GLOBAL_MODULES, CORE_PKG, 'package.json');
       try { coreVersion = JSON.parse(fs.readFileSync(corePkgPath, 'utf-8')).version; } catch {}
       // Restart daemon
