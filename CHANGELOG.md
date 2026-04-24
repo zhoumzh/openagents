@@ -9,6 +9,9 @@ All notable changes to the OpenAgents project will be documented in this file.
 - Configurable Workspace Endpoint within the Launcher Settings UI
 - Hot-reloading of the AgentConnector when the Workspace Endpoint is changed
 - `dev-local-frontend` and `dev-local-backend` Makefile targets
+- Implemented workspace deletion feature in Launcher (UI and IPC) to remove local configurations and perform remote soft-deletion.
+- Added `deleteWorkspace` method to `WorkspaceClient` to handle backend soft-delete API.
+- Added fallback logic in `loadCore` within `AgentManager` to prioritize local source `agent-connector` during development to prevent dependency caching issues.
 
 ### Fixed
 - Fixed Alembic migration `005` incorrect PostgreSQL UUID type usage
