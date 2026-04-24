@@ -48,6 +48,18 @@ function CodeBlock({ code, className = '' }: { code: string; className?: string 
 
 function LandingPage() {
   const { isOpenAgentsDomain, signIn } = useOpenAgentsAuth();
+  const [launcherVersion, setLauncherVersion] = useState('0.7.1');
+
+  useEffect(() => {
+    fetch('/api/config')
+      .then(res => res.json())
+      .then(data => {
+        if (data.launcherVersion) {
+          setLauncherVersion(data.launcherVersion);
+        }
+      })
+      .catch(console.error);
+  }, []);
 
   const agents = [
     { name: 'Claude Code', status: 'supported', command: 'openagents start claude', color: 'bg-amber-500' },
@@ -122,13 +134,13 @@ function LandingPage() {
                 </p>
               </div>
               <div className="relative z-10 flex flex-col gap-3">
-                <a href={`https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/OpenAgents-Launcher-${process.env.NEXT_PUBLIC_LAUNCHER_VERSION || '0.7.1'}-mac-arm64.zip`} className="block w-full">
+                <a href={`https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/OpenAgents-Launcher-${launcherVersion}-mac-arm64.zip`} className="block w-full">
                   <Button className="w-full h-12 text-base font-medium gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg hover:shadow-blue-500/25 transition-all">
                     <Download className="size-5" />
                     下载 macOS (Apple Silicon 推荐)
                   </Button>
                 </a>
-                <a href={`https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/OpenAgents-Launcher-${process.env.NEXT_PUBLIC_LAUNCHER_VERSION || '0.7.1'}-mac-x64.zip`} className="block w-full">
+                <a href={`https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/OpenAgents-Launcher-${launcherVersion}-mac-x64.zip`} className="block w-full">
                   <Button variant="outline" className="w-full h-12 text-base font-medium gap-2 bg-background/50 hover:bg-background shadow-sm transition-all border-blue-500/20 hover:border-blue-500/40">
                     <Download className="size-5" />
                     下载 macOS (Intel)
