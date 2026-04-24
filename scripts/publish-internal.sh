@@ -26,7 +26,7 @@ cd "$ROOT_DIR/packages/agent-connector"
 rm -f *.tgz
 TGZ_FILE=$(npm pack)
 mv "$TGZ_FILE" "$DIST/agent-launcher-latest.tgz"
-echo "  => dist/agent-launcher-latest.tgz"
+echo "  => release/agent-launcher-latest.tgz"
 
 # 2. 构建桌面端 (Launcher)
 echo ""
@@ -34,7 +34,7 @@ echo "==> [2/2] Building macOS desktop app (Launcher)..."
 cd "$ROOT_DIR/packages/launcher"
 npm run build:mac
 find dist -name "*.zip" -exec cp {} "$DIST/" \;
-echo "  => dist/*.zip"
+echo "  => release/*.zip"
 
 # 3. 上传到 GitLab Generic Package Registry
 echo ""

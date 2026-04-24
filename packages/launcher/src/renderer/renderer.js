@@ -319,10 +319,15 @@ async function openWorkspaceInBrowser(name) {
     const slug = (ws && ws.slug) || agent.network;
     
     // Check if the backend endpoint is local, and if so, map the browser to the local frontend
-    const isLocal = ws && ws.endpoint && (ws.endpoint.includes('localhost') || ws.endpoint.includes('127.0.0.1'));
-    let url = isLocal 
-      ? `http://localhost:3001/${slug}` 
-      : `https://workspace.openagents.org/${slug}`;
+    let url = `https://workspace.openagents.org/${slug}`;
+    if (ws && ws.endpoint) {
+      if (ws.endpoint.includes('localhost') || ws.endpoint.includes('127.0.0.1')) {
+        url = `http://localhost:3001/${slug}`;
+      } else {
+        const base = ws.endpoint.replace(/\/+$/, '').replace(/\/v1$/, '').replace('workspace-endpoint', 'workspace');
+        url = `${base}/${slug}`;
+      }
+    }
 
     if (ws && ws.token) url += `?token=${encodeURIComponent(ws.token)}`;
     window.api.openExternal(url);
@@ -487,9 +492,15 @@ async function showConnectWorkspace(agentName) {
     if (networks && networks.length > 0) {
       rows = networks.map((n) => {
         const display = n.name || n.slug || n.id;
-        const url = n.endpoint && (n.endpoint.includes('localhost') || n.endpoint.includes('127.0.0.1'))
-          ? `http://localhost:3001/${n.slug || n.id}`
-          : `workspace.openagents.org/${n.slug || n.id}`;
+        let url = `workspace.openagents.org/${n.slug || n.id}`;
+        if (n.endpoint) {
+          if (n.endpoint.includes('localhost') || n.endpoint.includes('127.0.0.1')) {
+            url = `http://localhost:3001/${n.slug || n.id}`;
+          } else {
+            const base = n.endpoint.replace(/\/+$/, '').replace(/\/v1$/, '').replace('workspace-endpoint', 'workspace');
+            url = `${base.replace(/^https?:\/\//, '')}/${n.slug || n.id}`;
+          }
+        }
         return `<button class="btn modal-action-btn" data-action="do-connect-workspace" data-name="${esc(agentName)}" data-slug="${esc(n.slug || n.id)}">${esc(display)} — ${esc(url)}</button>`;
       }).join('');
     }
@@ -1270,7 +1281,15 @@ async function refreshSettingsWorkspaces() {
     el.innerHTML = `<ul class="workspace-url-list">${workspaces.map(w => {
       const slug = w.slug || w.id;
       const name = w.name || slug;
-      const url = `https://workspace.openagents.org/${slug}`;
+      let url = `https://workspace.openagents.org/${slug}`;
+      if (w.endpoint) {
+        if (w.endpoint.includes('localhost') || w.endpoint.includes('127.0.0.1')) {
+          url = `http://localhost:3001/${slug}`;
+        } else {
+          const base = w.endpoint.replace(/\/+$/, '').replace(/\/v1$/, '').replace('workspace-endpoint', 'workspace');
+          url = `${base}/${slug}`;
+        }
+      }
       return `<li class="workspace-url-item">
         <span class="workspace-url-name">${esc(name)}</span>
         <span class="workspace-url-link" data-action="open-external" data-url="${esc(url)}${w.token ? '?token=' + encodeURIComponent(w.token) : ''}">${esc(url)}</span>
