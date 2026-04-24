@@ -110,6 +110,28 @@ function formatHealthLabel(health) {
   return parts.join(' · ');
 }
 
+function deriveFrontendUrl(endpoint, slug) {
+  if (!endpoint) return `https://openagents-workspaces-test.inner.chj.cloud/${slug}`;
+  if (endpoint.includes('localhost') || endpoint.includes('127.0.0.1')) {
+    return `http://localhost:3001/${slug}`;
+  }
+  
+  let base = endpoint.replace(/\/+$/, '').replace(/\/v1$/, '');
+  
+  if (base.includes('openagents') && !base.includes('openagents-workspaces')) {
+    base = base.replace('openagents', 'openagents-workspaces');
+  } else {
+    try {
+      const urlObj = new URL(base.startsWith('http') ? base : `https://${base}`);
+      if (urlObj.hostname.startsWith('api.')) {
+        urlObj.hostname = urlObj.hostname.substring(4);
+        base = urlObj.toString().replace(/\/+$/, '');
+      }
+    } catch {}
+  }
+  return `${base}/${slug}`;
+}
+
 // ---- Dashboard ----
 
 async function refreshDashboard() {
@@ -319,14 +341,9 @@ async function openWorkspaceInBrowser(name) {
     const slug = (ws && ws.slug) || agent.network;
     
     // Check if the backend endpoint is local, and if so, map the browser to the local frontend
-    let url = `https://workspace.openagents.org/${slug}`;
+    let url = `https://openagents-workspaces-test.inner.chj.cloud/${slug}`;
     if (ws && ws.endpoint) {
-      if (ws.endpoint.includes('localhost') || ws.endpoint.includes('127.0.0.1')) {
-        url = `http://localhost:3001/${slug}`;
-      } else {
-        const base = ws.endpoint.replace(/\/+$/, '').replace(/\/v1$/, '').replace('workspace-endpoint', 'workspace');
-        url = `${base}/${slug}`;
-      }
+      url = deriveFrontendUrl(ws.endpoint, slug);
     }
 
     if (ws && ws.token) url += `?token=${encodeURIComponent(ws.token)}`;
@@ -492,14 +509,9 @@ async function showConnectWorkspace(agentName) {
     if (networks && networks.length > 0) {
       rows = networks.map((n) => {
         const display = n.name || n.slug || n.id;
-        let url = `workspace.openagents.org/${n.slug || n.id}`;
+        let url = `openagents-workspaces-test.inner.chj.cloud/${n.slug || n.id}`;
         if (n.endpoint) {
-          if (n.endpoint.includes('localhost') || n.endpoint.includes('127.0.0.1')) {
-            url = `http://localhost:3001/${n.slug || n.id}`;
-          } else {
-            const base = n.endpoint.replace(/\/+$/, '').replace(/\/v1$/, '').replace('workspace-endpoint', 'workspace');
-            url = `${base.replace(/^https?:\/\//, '')}/${n.slug || n.id}`;
-          }
+          url = deriveFrontendUrl(n.endpoint, n.slug || n.id).replace(/^https?:\/\//, '');
         }
         return `<button class="btn modal-action-btn" data-action="do-connect-workspace" data-name="${esc(agentName)}" data-slug="${esc(n.slug || n.id)}">${esc(display)} — ${esc(url)}</button>`;
       }).join('');
@@ -1257,6 +1269,7 @@ async function refreshSettingsWorkspaces() {
   // Initialize endpoint setting input
   const epInput = document.getElementById('setting-workspace-endpoint');
   const epBtn = document.getElementById('btn-save-workspace-endpoint');
+
   if (epInput && !epInput._initialized) {
     epInput._initialized = true;
     window.api.getSetting('workspaceEndpoint').then(val => {
@@ -1281,14 +1294,9 @@ async function refreshSettingsWorkspaces() {
     el.innerHTML = `<ul class="workspace-url-list">${workspaces.map(w => {
       const slug = w.slug || w.id;
       const name = w.name || slug;
-      let url = `https://workspace.openagents.org/${slug}`;
+      let url = `https://openagents-workspaces-test.inner.chj.cloud/${slug}`;
       if (w.endpoint) {
-        if (w.endpoint.includes('localhost') || w.endpoint.includes('127.0.0.1')) {
-          url = `http://localhost:3001/${slug}`;
-        } else {
-          const base = w.endpoint.replace(/\/+$/, '').replace(/\/v1$/, '').replace('workspace-endpoint', 'workspace');
-          url = `${base}/${slug}`;
-        }
+        url = deriveFrontendUrl(w.endpoint, slug);
       }
       return `<li class="workspace-url-item">
         <span class="workspace-url-name">${esc(name)}</span>

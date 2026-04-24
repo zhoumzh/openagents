@@ -3,7 +3,7 @@
 const https = require('https');
 const http = require('http');
 
-const DEFAULT_ENDPOINT = 'https://workspace-endpoint.openagents.org';
+const DEFAULT_ENDPOINT = 'https://openagents-test.inner.chj.cloud';
 
 /**
  * Thrown when the workspace rejects a request because our session_id has
@@ -59,7 +59,7 @@ class WorkspaceClient {
     const result = data.data || data;
 
     const frontendUrl = this.endpoint
-      .replace('workspace-endpoint', 'workspace')
+      .replace('openagents', 'openagents-workspaces')
       .replace('/v1', '');
 
     return {
