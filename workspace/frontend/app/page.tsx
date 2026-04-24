@@ -121,11 +121,17 @@ function LandingPage() {
                   为绝大多数用户打造的开箱即用可视化客户端。一键自动安装运行环境，实时监控智能体状态，提供最直观、友好的管理体验。
                 </p>
               </div>
-              <div className="relative z-10">
-                <a href="https://gitlab.chehejia.com/zhoumingzhu/li-openagents/-/packages" target="_blank" rel="noreferrer" className="block w-full">
+              <div className="relative z-10 flex flex-col gap-3">
+                <a href={`https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/OpenAgents-Launcher-${process.env.NEXT_PUBLIC_LAUNCHER_VERSION || '0.7.1'}-mac-arm64.zip`} className="block w-full">
                   <Button className="w-full h-12 text-base font-medium gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg hover:shadow-blue-500/25 transition-all">
                     <Download className="size-5" />
-                    下载 macOS 桌面端
+                    下载 macOS (Apple Silicon 推荐)
+                  </Button>
+                </a>
+                <a href={`https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/OpenAgents-Launcher-${process.env.NEXT_PUBLIC_LAUNCHER_VERSION || '0.7.1'}-mac-x64.zip`} className="block w-full">
+                  <Button variant="outline" className="w-full h-12 text-base font-medium gap-2 bg-background/50 hover:bg-background shadow-sm transition-all border-blue-500/20 hover:border-blue-500/40">
+                    <Download className="size-5" />
+                    下载 macOS (Intel)
                   </Button>
                 </a>
               </div>
