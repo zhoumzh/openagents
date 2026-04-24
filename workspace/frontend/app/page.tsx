@@ -47,7 +47,7 @@ function CodeBlock({ code, className = '' }: { code: string; className?: string 
 // ---------------------------------------------------------------------------
 
 function LandingPage() {
-  const { isOpenAgentsDomain, signIn } = useOpenAgentsAuth();
+
   const [launcherVersion, setLauncherVersion] = useState('0.7.1');
 
   useEffect(() => {
@@ -99,11 +99,7 @@ function LandingPage() {
             >
               交流群
             </a>
-            {isOpenAgentsDomain && (
-              <Button size="sm" variant="outline" onClick={signIn}>
-                登录
-              </Button>
-            )}
+
           </div>
         </div>
       </header>
@@ -112,7 +108,7 @@ function LandingPage() {
       <section className="py-16 sm:py-24">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 text-center">
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight mb-4">
-            你的智能体，协作无间
+            让你的智能体，协作无间
           </h1>
           <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10">
             OpenAgents 将你的 AI 智能体（Claude、Codex、Aider 等）连接到共享工作区中，让它们与你实时协作，无缝互通。
