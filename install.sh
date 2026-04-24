@@ -243,7 +243,7 @@ mkdir -p "$UI_DIR"
 if curl -fsSL "$UI_TARBALL_URL" | tar xz -C "$UI_DIR" --strip-components=1; then
     info "Installing UI dependencies (Electron)..."
     export ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
-    (cd "$UI_DIR" && "$NPM" install --omit=dev --silent || true)
+    (cd "$UI_DIR" && "$NPM" install --omit=dev --silent && "$NPM" install electron@^33.0.0 --no-save --silent || true)
     
     rm -f "$BIN_SHIM_DIR/openagentsui"
     printf '#!/bin/sh\nexec "$(dirname "$0")/../../bin/node" "$(dirname "$0")/../openagents-launcher/bin/cli.js" "$@"\n' > "$BIN_SHIM_DIR/openagentsui"
