@@ -49,9 +49,17 @@ for file in *; do
       mv "$file" "$safe_file"
     fi
     echo "  -> uploading: $safe_file"
-    curl -sf --upload-file "$safe_file" \
+    # Use -sS to hide progress meter but show errors. We capture HTTP code in a variable.
+    HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" --upload-file "$safe_file" \
       --header "PRIVATE-TOKEN: ${TOKEN}" \
-      "https://${GITLAB_HOST}/api/v4/projects/${GITLAB_PROJECT}/packages/generic/${NAME}/${VERSION}/${safe_file}"
+      "https://${GITLAB_HOST}/api/v4/projects/${GITLAB_PROJECT}/packages/generic/${NAME}/${VERSION}/${safe_file}")
+      
+    if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "201" ]; then
+      echo "❌ Upload failed with HTTP status: $HTTP_CODE"
+      echo "  👉 If you see 403, your GITLAB_TOKEN might belong to a different project or lacks 'api' scope."
+      echo "  👉 If you see 413, the file is too large for the GitLab server configuration."
+      exit 1
+    fi
   fi
 done
 
