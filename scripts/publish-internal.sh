@@ -33,8 +33,8 @@ echo ""
 echo "==> [2/2] Building macOS desktop app (Launcher)..."
 cd "$ROOT_DIR/packages/launcher"
 npm run build:mac
-find dist -name "*.dmg" -exec cp {} "$DIST/" \;
-echo "  => dist/*.dmg"
+find dist -name "*.zip" -exec cp {} "$DIST/" \;
+echo "  => dist/*.zip"
 
 # 3. 上传到 GitLab Generic Package Registry
 echo ""
