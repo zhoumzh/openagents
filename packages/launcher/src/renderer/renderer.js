@@ -317,7 +317,13 @@ async function openWorkspaceInBrowser(name) {
     const workspaces = await window.api.listWorkspaces();
     const ws = workspaces.find((w) => w.slug === agent.network || w.id === agent.network);
     const slug = (ws && ws.slug) || agent.network;
-    let url = `https://workspace.openagents.org/${slug}`;
+    
+    // Check if the backend endpoint is local, and if so, map the browser to the local frontend
+    const isLocal = ws && ws.endpoint && (ws.endpoint.includes('localhost') || ws.endpoint.includes('127.0.0.1'));
+    let url = isLocal 
+      ? `http://localhost:3001/${slug}` 
+      : `https://workspace.openagents.org/${slug}`;
+
     if (ws && ws.token) url += `?token=${encodeURIComponent(ws.token)}`;
     window.api.openExternal(url);
   } catch (err) {
@@ -482,7 +488,7 @@ async function showConnectWorkspace(agentName) {
       rows = networks.map((n) => {
         const display = n.name || n.slug || n.id;
         const url = n.endpoint && (n.endpoint.includes('localhost') || n.endpoint.includes('127.0.0.1'))
-          ? `${n.endpoint}/${n.slug || n.id}`
+          ? `http://localhost:3001/${n.slug || n.id}`
           : `workspace.openagents.org/${n.slug || n.id}`;
         return `<button class="btn modal-action-btn" data-action="do-connect-workspace" data-name="${esc(agentName)}" data-slug="${esc(n.slug || n.id)}">${esc(display)} — ${esc(url)}</button>`;
       }).join('');
@@ -1236,6 +1242,24 @@ startLogAutoRefresh();
 
 async function refreshSettingsWorkspaces() {
   const el = document.getElementById('settings-workspaces');
+  
+  // Initialize endpoint setting input
+  const epInput = document.getElementById('setting-workspace-endpoint');
+  const epBtn = document.getElementById('btn-save-workspace-endpoint');
+  if (epInput && !epInput._initialized) {
+    epInput._initialized = true;
+    window.api.getSetting('workspaceEndpoint').then(val => {
+      if (val) epInput.value = val;
+    });
+    if (epBtn) {
+      epBtn.addEventListener('click', async () => {
+        const val = epInput.value.trim();
+        await window.api.setSetting('workspaceEndpoint', val || null);
+        showToast('Endpoint saved. It will take effect immediately.', 'success');
+      });
+    }
+  }
+
   if (!el) return;
   try {
     const workspaces = await window.api.listWorkspaces();
