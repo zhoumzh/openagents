@@ -43,10 +43,15 @@ echo "==> Uploading to GitLab Package Registry (${GITLAB_HOST})..."
 cd "$DIST"
 for file in *; do
   if [ -f "$file" ]; then
-    echo "  -> uploading: $file"
-    curl -sf --upload-file "$file" \
+    # Replace spaces with hyphens to avoid curl URL malformed errors
+    safe_file="${file// /-}"
+    if [ "$file" != "$safe_file" ]; then
+      mv "$file" "$safe_file"
+    fi
+    echo "  -> uploading: $safe_file"
+    curl -sf --upload-file "$safe_file" \
       --header "PRIVATE-TOKEN: ${TOKEN}" \
-      "https://${GITLAB_HOST}/api/v4/projects/${GITLAB_PROJECT}/packages/generic/${NAME}/${VERSION}/${file}"
+      "https://${GITLAB_HOST}/api/v4/projects/${GITLAB_PROJECT}/packages/generic/${NAME}/${VERSION}/${safe_file}"
   fi
 done
 
