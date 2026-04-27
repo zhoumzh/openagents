@@ -50,13 +50,14 @@ class Config {
     fs.writeFileSync(this.configFile, serializeYaml(config), 'utf-8');
   }
 
-  addAgent({ name, type, role, path: agentPath }) {
+  addAgent({ name, type, role, path: agentPath, resumeSessionId }) {
     const config = this.load();
     if (config.agents.some((a) => a.name === name)) {
       throw new Error(`Agent '${name}' already exists`);
     }
     const entry = { name, type: type || 'openclaw', role: role || 'worker' };
     if (agentPath) entry.path = agentPath;
+    if (resumeSessionId) entry.resumeSessionId = resumeSessionId;
     config.agents.push(entry);
     this.save(config);
     return entry;

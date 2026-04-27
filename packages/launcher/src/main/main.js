@@ -463,6 +463,15 @@ function setupIPC() {
 
   // Shell
   ipcMain.handle('shell:open-external', (_e, url) => shell.openExternal(url));
+  ipcMain.handle('shell:pick-directory', async () => {
+    const result = await dialog.showOpenDialog(mainWindow || undefined, {
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+      return null;
+    }
+    return result.filePaths[0];
+  });
   ipcMain.handle('shell:open-terminal', (_e, cmd) => {
     const { spawn } = require('child_process');
     const { getEnhancedEnv } = (() => { try { return require(path.join(os.homedir(), '.openagents', 'nodejs', 'node_modules', '@openagents-org', 'agent-launcher')).paths; } catch { try { return require('@openagents-org/agent-launcher').paths; } catch { return { getEnhancedEnv: () => process.env }; } } })();

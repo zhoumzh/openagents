@@ -102,6 +102,25 @@ describe('Config', () => {
     assert.equal(cfg.getAgent('b1').role, 'orchestrator');
   });
 
+  it('persists optional resumeSessionId for claude agents', () => {
+    const cfg = new Config(tmpDir);
+    cfg.addAgent({
+      name: 'claude-resume',
+      type: 'claude',
+      role: 'worker',
+      resumeSessionId: 'e603d1f6-e3a3-4b51-bcee-8341b9ef37df',
+    });
+
+    const agent = cfg.getAgent('claude-resume');
+    assert.equal(agent.resumeSessionId, 'e603d1f6-e3a3-4b51-bcee-8341b9ef37df');
+
+    const cfgReloaded = new Config(tmpDir);
+    assert.equal(
+      cfgReloaded.getAgent('claude-resume').resumeSessionId,
+      'e603d1f6-e3a3-4b51-bcee-8341b9ef37df'
+    );
+  });
+
   it('addNetwork / removeNetwork disconnects agents', () => {
     const cfg = new Config(tmpDir);
     cfg.addAgent({ name: 'x', type: 'openclaw', role: 'worker' });

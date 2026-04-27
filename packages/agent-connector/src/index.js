@@ -83,13 +83,20 @@ class AgentConnector {
         network: a.network || null,
         networkName: network ? (network.name || network.slug) : null,
         path: a.path || null,
+        resumeSessionId: a.resumeSessionId || null,
         env: { ...agentEnv, ...(a.env || {}) },
       };
     });
   }
 
-  addAgent({ name, type, role, path }) {
-    this.config.addAgent({ name, type: type || 'openclaw', role: role || 'worker', path });
+  addAgent({ name, type, role, path, resumeSessionId }) {
+    this.config.addAgent({
+      name,
+      type: type || 'openclaw',
+      role: role || 'worker',
+      path,
+      resumeSessionId,
+    });
     return { success: true };
   }
 

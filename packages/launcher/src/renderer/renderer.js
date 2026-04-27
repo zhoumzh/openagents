@@ -620,6 +620,17 @@ async function doJoinWithToken(agentName) {
   }
 }
 
+async function browseAgentPath() {
+  try {
+    const selectedPath = await window.api.pickDirectory();
+    if (!selectedPath) return;
+    const input = document.getElementById('new-agent-path');
+    if (input) input.value = selectedPath;
+  } catch (err) {
+    showToast(`Error: ${err.message}`, 'error');
+  }
+}
+
 // ---- Agents tab ----
 
 document.getElementById('btn-add-agent').addEventListener('click', () => showNewAgentDialog());
@@ -670,7 +681,14 @@ async function showNewAgentDialog() {
       </div>
       <div class="form-group">
         <label>Working directory (optional)</label>
-        <input type="text" id="new-agent-path" placeholder="/path/to/project">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="new-agent-path" placeholder="/path/to/project" style="flex:1;">
+          <button class="btn" type="button" data-action="browse-agent-path">Browse</button>
+        </div>
+      </div>
+      <div class="form-group" id="new-agent-resume-group" style="display:none;">
+        <label>Claude Session ID (optional)</label>
+        <input type="text" id="new-agent-resume-session" placeholder="e603d1f6-e3a3-4b51-bcee-8341b9ef37df">
       </div>
       <div class="modal-button-row">
         <button class="btn btn-primary" data-action="do-add-agent">Create</button>
@@ -681,10 +699,15 @@ async function showNewAgentDialog() {
     // Auto-generate name
     const nameInput = document.getElementById('new-agent-name');
     const typeSelect = document.getElementById('new-agent-type');
+    const resumeGroup = document.getElementById('new-agent-resume-group');
+    const resumeInput = document.getElementById('new-agent-resume-session');
     const generateName = () => {
       const type = typeSelect.value;
       const suffix = Math.random().toString(36).slice(2, 6);
       nameInput.placeholder = `${type}-${suffix}`;
+      const isClaude = type === 'claude';
+      if (resumeGroup) resumeGroup.style.display = isClaude ? 'block' : 'none';
+      if (resumeInput && !isClaude) resumeInput.value = '';
     };
     typeSelect.addEventListener('change', generateName);
     generateName();
@@ -702,6 +725,7 @@ async function doAddAgent() {
   const type = document.getElementById('new-agent-type')?.value;
   let name = document.getElementById('new-agent-name')?.value?.trim();
   const agentPath = document.getElementById('new-agent-path')?.value?.trim();
+  const resumeSessionId = document.getElementById('new-agent-resume-session')?.value?.trim();
 
   if (!name) {
     name = document.getElementById('new-agent-name')?.placeholder || `${type}-${Math.random().toString(36).slice(2, 6)}`;
@@ -715,7 +739,12 @@ async function doAddAgent() {
   closeModal();
 
   try {
-    await window.api.addAgent({ name, type, path: agentPath || undefined });
+    await window.api.addAgent({
+      name,
+      type,
+      path: agentPath || undefined,
+      resumeSessionId: type === 'claude' && resumeSessionId ? resumeSessionId : undefined,
+    });
     showToast(`Agent '${name}' created`, 'success');
     const catalog = await window.api.getCatalog();
     const entry = catalog.find((c) => c.name === type);
@@ -1429,6 +1458,7 @@ document.addEventListener('click', (e) => {
     case 'show-join-token': showJoinWithToken(name); break;
     case 'do-create-workspace': doCreateWorkspace(name); break;
     case 'do-join-token': doJoinWithToken(name); break;
+    case 'browse-agent-path': browseAgentPath(); break;
     case 'remove-workspace': removeWorkspace(slug); break;
     case 'do-add-agent': doAddAgent(); break;
     case 'save-config': saveConfig(type); break;

@@ -433,6 +433,7 @@ class Daemon {
         disabledModules: new Set(),
         agentEnv: this._buildAgentEnv(agentCfg),
         workingDir: agentCfg.path || undefined,
+        resumeSessionId: agentCfg.resumeSessionId || undefined,
       });
     } catch (e) {
       this._log(`${name} failed to create ${agentType} adapter: ${e.message}`);

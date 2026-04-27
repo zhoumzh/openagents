@@ -31,6 +31,7 @@ class ClaudeAdapter extends BaseAdapter {
   constructor(opts) {
     super(opts);
     this.disabledModules = opts.disabledModules || new Set();
+    this.resumeSessionId = opts.resumeSessionId || null;
     this._channelSessions = {}; // channel → Claude CLI session_id
     this._channelProcesses = {}; // channel → child process
     this._sessionsFile = path.join(
@@ -256,7 +257,7 @@ class ClaudeAdapter extends BaseAdapter {
     cmd.push('--disallowedTools', 'AskUserQuestion');
 
     // Resume existing conversation (skipped on retry after stale session)
-    const sessionId = this._channelSessions[channelName];
+    const sessionId = this._channelSessions[channelName] || this.resumeSessionId;
     if (sessionId && !skipResume) {
       cmd.push('--resume', sessionId);
     }
