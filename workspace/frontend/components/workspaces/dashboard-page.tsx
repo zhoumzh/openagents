@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Archive, Bot, Clock, Loader2, LogOut, Plus, Trash2, Users } from 'lucide-react';
+import { Archive, Bot, Clock, Loader2, LogOut, Plus, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -11,30 +11,6 @@ import { useAuth } from '@/lib/auth-context';
 import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
 import { createWorkspace, listMyWorkspaces, type WorkspaceSummary } from '@/lib/dashboard-api';
 import { timeAgo } from '@/lib/helpers';
-
-const LOCAL_WORKSPACES_KEY = 'oa_local_workspaces';
-
-function readLocalWorkspaces(): WorkspaceSummary[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(LOCAL_WORKSPACES_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function rememberLocalWorkspace(workspace: WorkspaceSummary) {
-  if (typeof window === 'undefined') return;
-  const existing = readLocalWorkspaces();
-  const next = [
-    workspace,
-    ...existing.filter((item) => item.workspaceId !== workspace.workspaceId),
-  ];
-  localStorage.setItem(LOCAL_WORKSPACES_KEY, JSON.stringify(next.slice(0, 50)));
-}
 
 function CreateWorkspaceForm({
   creatorEmail,
@@ -66,16 +42,6 @@ function CreateWorkspaceForm({
         name: trimmedName,
         creatorEmail,
         bearerToken,
-      });
-      rememberLocalWorkspace({
-        workspaceId: ws.workspaceId,
-        slug: ws.slug,
-        name: ws.name,
-        status: 'active',
-        token: ws.token,
-        agentCount: trimmedAgentName ? 1 : 0,
-        createdAt: new Date().toISOString(),
-        lastActivityAt: new Date().toISOString(),
       });
       onCreated();
       router.push(ws.token ? `/${ws.slug}?token=${ws.token}` : `/${ws.slug}`);
@@ -191,15 +157,11 @@ export function WorkspaceDashboardPage() {
     setLoading(true);
     setError('');
     try {
-      if (!user?.email) {
-        setWorkspaces(readLocalWorkspaces());
-      } else {
-        const data = await listMyWorkspaces({
-          creatorEmail: user.email,
-          bearerToken,
-        });
-        setWorkspaces(data.items);
-      }
+      const data = await listMyWorkspaces({
+        creatorEmail: user?.email,
+        bearerToken,
+      });
+      setWorkspaces(data.items);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '加载工作区失败');
     } finally {
@@ -210,13 +172,6 @@ export function WorkspaceDashboardPage() {
   useEffect(() => {
     load();
   }, [load]);
-
-  const handleClearLocalWorkspaces = useCallback(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem(LOCAL_WORKSPACES_KEY);
-    }
-    setWorkspaces([]);
-  }, []);
 
   return (
     <div className="min-h-screen bg-background">
@@ -248,23 +203,15 @@ export function WorkspaceDashboardPage() {
               {loading ? '加载中...' : `${workspaces.length} 个工作区`}
             </p>
             <p className="text-xs text-muted-foreground/80 mt-1">
-              未登录时仅显示本浏览器创建过的 workspace。
+              当前列表直接来自已配置的 workspace 服务端。
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            {!user?.email && workspaces.length > 0 && (
-              <Button variant="ghost" size="sm" onClick={handleClearLocalWorkspaces}>
-                <Trash2 className="size-4 mr-1" />
-                清除本地记录
-              </Button>
-            )}
-            {!showCreate && (
-              <Button size="sm" onClick={() => setShowCreate(true)}>
-                <Plus className="size-4 mr-1" />
-                新建工作区
-              </Button>
-            )}
-          </div>
+          {!showCreate && (
+            <Button size="sm" onClick={() => setShowCreate(true)}>
+              <Plus className="size-4 mr-1" />
+              新建工作区
+            </Button>
+          )}
         </div>
 
         {error && (

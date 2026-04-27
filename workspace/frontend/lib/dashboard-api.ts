@@ -37,6 +37,7 @@ type ModernWorkspaceSummary = {
   slug: string;
   name: string;
   status: string;
+  token?: string | null;
   createdAt: string | null;
   lastActivityAt: string | null;
   agents?: unknown[];
@@ -140,7 +141,7 @@ function mapModernWorkspace(item: ModernWorkspaceSummary): WorkspaceSummary {
     slug: item.slug,
     name: item.name,
     status: item.status,
-    token: null,
+    token: item.token || null,
     agentCount: item.agents?.length || 0,
     createdAt: item.createdAt,
     lastActivityAt: item.lastActivityAt,
@@ -160,22 +161,11 @@ export async function listMyWorkspaces({
   status?: string;
   bearerToken?: string | null;
 }): Promise<PaginatedWorkspaces> {
-  if (!creatorEmail) {
-    return {
-      items: [],
-      pagination: {
-        page,
-        page_size: pageSize,
-        total: 0,
-        total_pages: 0,
-        has_next: false,
-        has_prev: false,
-      },
-    };
-  }
-
   try {
-    const params = new URLSearchParams({ creator_email: creatorEmail });
+    const params = new URLSearchParams();
+    if (creatorEmail) {
+      params.set('creator_email', creatorEmail);
+    }
 
     const query = params.toString();
     const items = await modernFetch<ModernWorkspaceSummary[]>(

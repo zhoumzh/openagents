@@ -102,7 +102,7 @@ class CollaboratorAddRequest(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _format_workspace(ws: Workspace, members: list, now: datetime) -> dict:
+def _format_workspace(ws: Workspace, members: list, now: datetime, include_token: bool = False) -> dict:
     agents = []
     for m in members:
         status = m.status
@@ -124,7 +124,7 @@ def _format_workspace(ws: Workspace, members: list, now: datetime) -> dict:
             "joinedAt": m.joined_at.isoformat() if m.joined_at else None,
         })
 
-    return {
+    payload = {
         "workspaceId": str(ws.id),
         "slug": ws.slug,
         "name": ws.name,
@@ -135,6 +135,9 @@ def _format_workspace(ws: Workspace, members: list, now: datetime) -> dict:
         "lastActivityAt": ws.last_activity_at.isoformat() if ws.last_activity_at else None,
         "agents": agents,
     }
+    if include_token:
+        payload["token"] = ws.password_hash
+    return payload
 
 
 def _format_channel(ch: Channel) -> dict:
@@ -250,7 +253,7 @@ async def list_workspaces(
     workspaces = db.execute(query.order_by(Workspace.last_activity_at.desc())).scalars().all()
     now = datetime.now(timezone.utc)
 
-    results = [_format_workspace(ws, ws.members, now) for ws in workspaces]
+    results = [_format_workspace(ws, ws.members, now, include_token=True) for ws in workspaces]
 
     return success_response(results)
 
