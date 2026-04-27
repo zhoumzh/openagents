@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import {
+  ArrowLeft,
   Plus, MessageSquare, FileText, Globe, PlusSquare,
   Settings, Copy, Check,
   LogIn, LogOut, Shield, Moon, Sun, KeyRound, Share2, X, Crown,
@@ -26,7 +28,7 @@ import { getAgentColor, getAgentInitials, isRecentAgent, timeAgo } from '@/lib/h
 import { cn } from '@/lib/utils';
 import { workspaceApi } from '@/lib/api';
 import { Switch } from '@/components/ui/switch';
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
+import { copyTextToClipboard, useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { toast } from 'sonner';
 import type { WorkspaceCollaborator } from '@/lib/types';
 import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
@@ -69,6 +71,7 @@ function NavButton({
 // ── Main SidebarContent ──
 
 export function SidebarContent() {
+  const router = useRouter();
   const { isSidebarOpen, sidebarToggle, viewMode, setViewMode, setSelectedAgentName } = useLayout();
   const { agents, sessions, files, browserTabs, createSession, workspace, token, refreshWorkspace } = useWorkspace();
   const { user, isOpenAgentsDomain, signIn, signOut } = useOpenAgentsAuth();
@@ -85,12 +88,18 @@ export function SidebarContent() {
   const isDark = mounted && theme === 'dark';
   const toggleTheme = () => setTheme(isDark ? 'light' : 'dark');
 
-  const handleCopyToken = () => {
+  const handleCopyToken = async () => {
     if (!token) {
       toast.error('No management token available');
       return;
     }
-    navigator.clipboard.writeText(token);
+
+    const copied = await copyTextToClipboard(token);
+    if (!copied) {
+      toast.error('Failed to copy token');
+      return;
+    }
+
     setTokenCopied(true);
     toast.success('Management token copied');
     setTimeout(() => setTokenCopied(false), 2000);
@@ -276,13 +285,14 @@ export function SidebarContent() {
               Actions
             </p>
             <div className="space-y-0.5">
+              <NavButton icon={<ArrowLeft className="size-[15px]" />} label="Back to Workspaces" onClick={() => router.push('/workspaces')} />
               <NavButton active={viewMode === 'connect'} icon={<PlusSquare className="size-[15px]" />} label="Connect Agent" onClick={() => setViewMode('connect')} />
               <NavButton icon={<Share2 className="size-[15px]" />} label="Share" onClick={() => setShareOpen(true)} />
               {token && (
                 <NavButton
                   icon={tokenCopied ? <Check className="size-[15px]" /> : <KeyRound className="size-[15px]" />}
                   label={tokenCopied ? 'Copied!' : 'Copy Token'}
-                  onClick={handleCopyToken}
+                  onClick={() => void handleCopyToken()}
                 />
               )}
               <NavButton icon={<Settings className="size-[15px]" />} label="Settings" onClick={() => setSettingsOpen(true)} />
@@ -593,4 +603,3 @@ function SettingsDialogPortal({ open, onOpenChange, workspace, refreshWorkspace 
     </Dialog>
   );
 }
-

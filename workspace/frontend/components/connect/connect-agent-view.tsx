@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { X, Copy, Check, ExternalLink, Loader2, Terminal, ArrowRight, Key } from 'lucide-react';
 import { useLayout } from '@/components/layout/layout-context';
 import { useWorkspace } from '@/lib/workspace-context';
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
+import { copyTextToClipboard, useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { workspaceApi } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { AgentCatalogEntry } from '@/lib/types';
@@ -57,8 +57,9 @@ export function ConnectAgentView() {
     return () => { cancelled = true; };
   }, []);
 
-  const handleCopyToken = () => {
-    navigator.clipboard.writeText(token);
+  const handleCopyToken = async () => {
+    const copied = await copyTextToClipboard(token);
+    if (!copied) return;
     setTokenCopied(true);
     setTimeout(() => setTokenCopied(false), 2000);
   };
@@ -97,7 +98,7 @@ export function ConnectAgentView() {
             </p>
             <div className="ml-8">
               <button
-                onClick={handleCopyToken}
+                onClick={() => void handleCopyToken()}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border-2 border-dashed border-zinc-200 dark:border-zinc-700 hover:border-primary/40 dark:hover:border-primary/40 bg-zinc-50 dark:bg-zinc-900/50 transition-colors group"
               >
                 <Key className="size-4 text-muted-foreground shrink-0" />

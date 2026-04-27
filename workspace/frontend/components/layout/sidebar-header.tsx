@@ -1,13 +1,15 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import { PanelLeft } from 'lucide-react';
+import { ArrowLeft, PanelLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useLayout } from './layout-context';
 import { useWorkspace } from '@/lib/workspace-context';
 
 export function SidebarHeader() {
+  const router = useRouter();
   const { sidebarToggle, isSidebarOpen } = useLayout();
   const { workspace, renameWorkspace } = useWorkspace();
   const [editing, setEditing] = useState(false);
@@ -31,6 +33,9 @@ export function SidebarHeader() {
   if (!isSidebarOpen) {
     return (
       <div className="flex items-center justify-center shrink-0 px-2.5 py-3.5">
+        <Button mode="icon" variant="ghost" onClick={() => router.push('/workspaces')} className="hidden lg:inline-flex shrink-0" title="Back to Workspaces">
+          <ArrowLeft />
+        </Button>
         <Button mode="icon" variant="ghost" onClick={sidebarToggle} className="hidden lg:inline-flex shrink-0" title="Toggle sidebar">
           <PanelLeft />
         </Button>
@@ -40,6 +45,9 @@ export function SidebarHeader() {
 
   return (
     <div className="flex items-center gap-2.5 shrink-0 px-3.5 py-4">
+      <Button mode="icon" variant="ghost" onClick={() => router.push('/workspaces')} className="shrink-0" title="Back to Workspaces">
+        <ArrowLeft className="size-4" />
+      </Button>
       <div className="size-8 shrink-0">
         <Image src="/logo-black.png" alt="OpenAgents" width={32} height={32} className="size-full object-contain dark:hidden" />
         <Image src="/logo-white.png" alt="OpenAgents" width={32} height={32} className="size-full object-contain hidden dark:block" />

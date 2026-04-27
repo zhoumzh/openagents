@@ -9,15 +9,17 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { Menu, MessageSquare, FileText, Globe, Plus } from 'lucide-react';
+import { ArrowLeft, Menu, MessageSquare, FileText, Globe, Plus } from 'lucide-react';
 import Image from 'next/image';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { SidebarContent } from './sidebar-content';
 import { useLayout, type ViewMode } from './layout-context';
 import { useWorkspace } from '@/lib/workspace-context';
 import { cn } from '@/lib/utils';
 
 export function MobileHeader() {
+  const router = useRouter();
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const { viewMode, setViewMode, openMobileList, openMobileDetail } = useLayout();
   const { workspace, createSession, sessions, agents } = useWorkspace();
@@ -83,14 +85,25 @@ export function MobileHeader() {
             </span>
           </div>
 
-          {/* Right: new thread button */}
-          <button
-            onClick={handleNewThread}
-            className="size-8 flex items-center justify-center rounded-lg bg-primary text-primary-foreground shrink-0"
-            title="New Thread"
-          >
-            <Plus className="size-4" />
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            <Button
+              variant="ghost"
+              mode="icon"
+              size="sm"
+              className="shrink-0"
+              onClick={() => router.push('/workspaces')}
+              title="Back to Workspaces"
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
+            <button
+              onClick={handleNewThread}
+              className="size-8 flex items-center justify-center rounded-lg bg-primary text-primary-foreground shrink-0"
+              title="New Thread"
+            >
+              <Plus className="size-4" />
+            </button>
+          </div>
         </div>
       </header>
 

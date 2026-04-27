@@ -6,6 +6,7 @@ import { Copy, Check, User, FileIcon, Download, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { memo, useCallback, useMemo, useState } from 'react';
 import type { WorkspaceMessage, WorkspaceAgent } from '@/lib/types';
+import { copyTextToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { getAgentColor, getAgentInitials } from '@/lib/helpers';
 import { MarkdownContent } from './markdown-content';
 import { workspaceApi } from '@/lib/api';
@@ -122,13 +123,13 @@ export const ChatMessage = memo(function ChatMessage({ message, agents = [] }: C
     : null;
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(message.content);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
+    const copiedOk = await copyTextToClipboard(message.content);
+    if (!copiedOk) {
       toast.error('Failed to copy');
+      return;
     }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   // Status messages — subtle inline
