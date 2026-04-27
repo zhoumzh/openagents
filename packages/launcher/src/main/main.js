@@ -720,13 +720,6 @@ app.whenReady().then(async () => {
     createWindow();
   }
 
-  // Check for core library updates periodically (every 4 hours)
-  // On startup, the auto-update already ran in ensureCoreLibrary.
-  // This periodic check catches updates while the app stays open for days.
-  const FOUR_HOURS = 4 * 60 * 60 * 1000;
-  setInterval(() => checkCoreUpdate().catch(() => {}), FOUR_HOURS);
-  // Also check once after 30s (in case the startup auto-update was slow)
-  setTimeout(() => checkCoreUpdate().catch(() => {}), 30000);
 });
 
 app.on('window-all-closed', () => {
