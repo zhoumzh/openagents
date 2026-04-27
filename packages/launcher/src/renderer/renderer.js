@@ -355,59 +355,61 @@ async function openWorkspaceInBrowser(name) {
 
 // ---- Configure Agent Screen ----
 
-async function openConfigureScreen(agentType) {
+async function openConfigureScreen(agentType, mode = 'auto') {
   showModal(`<div class="loading-text">Loading configuration...</div>`);
 
   try {
-    const [fields, saved] = await Promise.all([
+    const [fields, saved, catalog] = await Promise.all([
       window.api.getEnvFields(agentType),
       window.api.getAgentEnv(agentType),
+      window.api.getCatalog(),
     ]);
+    const entry = catalog.find(c => c.name === agentType);
+    const checkReady = entry?.check_ready;
+
+    if (checkReady?.login_command && mode !== 'env') {
+      let loggedIn = false;
+      try {
+        const health = await window.api.healthCheck(agentType);
+        loggedIn = health?.ready || false;
+      } catch {}
+
+      showModal(`
+        <h3>Configure ${esc(agentType)}</h3>
+        <p class="hint">This agent supports CLI login. API key configuration is optional.</p>
+        <div style="margin:16px 0;padding:12px;background:var(--bg-secondary);border-radius:var(--radius);">
+          <span style="font-size:18px;">${loggedIn ? '✅' : '⚠️'}</span>
+          <strong>${loggedIn ? 'Logged in' : 'Not logged in'}</strong>
+          ${!loggedIn ? `<p class="hint" style="margin-top:8px;">${esc(checkReady.not_ready_message || 'Login required')}</p>` : ''}
+        </div>
+        <div class="modal-button-row">
+          <button class="btn btn-primary" id="btn-agent-login" data-login-cmd="${esc(checkReady.login_command)}">
+            ${loggedIn ? 'Re-login' : 'Login'}
+          </button>
+          ${fields && fields.length > 0 ? `<button class="btn" id="btn-agent-api-config">API Config</button>` : ''}
+          <button class="btn" data-action="close-modal">Close</button>
+        </div>
+      `);
+
+      document.getElementById('btn-agent-login').addEventListener('click', async () => {
+        const cmd = checkReady.login_command;
+        showToast(`Opening terminal for ${cmd}... Complete login in the new window.`, 'info');
+        try {
+          await window.api.openTerminal(cmd);
+          setTimeout(() => openConfigureScreen(agentType), 5000);
+        } catch (err) {
+          showToast(`Failed to open terminal: ${err.message}`, 'error');
+        }
+      });
+
+      const apiConfigBtn = document.getElementById('btn-agent-api-config');
+      if (apiConfigBtn) {
+        apiConfigBtn.addEventListener('click', () => openConfigureScreen(agentType, 'env'));
+      }
+      return;
+    }
 
     if (!fields || fields.length === 0) {
-      // Check if agent type requires login (e.g., Claude Code)
-      const catalog = await window.api.getCatalog();
-      const entry = catalog.find(c => c.name === agentType);
-      const checkReady = entry?.check_ready;
-
-      if (checkReady?.login_command) {
-        // Agent uses login-based auth (not env vars)
-        let loggedIn = false;
-        try {
-          const health = await window.api.healthCheck(agentType);
-          loggedIn = health?.ready || false;
-        } catch {}
-
-        showModal(`
-          <h3>Configure ${esc(agentType)}</h3>
-          <p class="hint">This agent uses login-based authentication.</p>
-          <div style="margin:16px 0;padding:12px;background:var(--bg-secondary);border-radius:var(--radius);">
-            <span style="font-size:18px;">${loggedIn ? '✅' : '⚠️'}</span>
-            <strong>${loggedIn ? 'Logged in' : 'Not logged in'}</strong>
-            ${!loggedIn ? `<p class="hint" style="margin-top:8px;">${esc(checkReady.not_ready_message || 'Login required')}</p>` : ''}
-          </div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-primary" id="btn-agent-login" data-login-cmd="${esc(checkReady.login_command)}">
-              ${loggedIn ? 'Re-login' : 'Login'}
-            </button>
-            <button class="btn" data-action="close-modal">Close</button>
-          </div>
-        `);
-
-        document.getElementById('btn-agent-login').addEventListener('click', async () => {
-          const cmd = checkReady.login_command;
-          showToast(`Opening terminal for ${cmd}... Complete login in the new window.`, 'info');
-          try {
-            // Open login command in a visible terminal window
-            await window.api.openTerminal(cmd);
-            // Give user time to complete login, then refresh
-            setTimeout(() => openConfigureScreen(agentType), 5000);
-          } catch (err) {
-            showToast(`Failed to open terminal: ${err.message}`, 'error');
-          }
-        });
-        return;
-      }
 
       showModal(`
         <h3>Configure ${esc(agentType)}</h3>
@@ -715,8 +717,13 @@ async function doAddAgent() {
   try {
     await window.api.addAgent({ name, type, path: agentPath || undefined });
     showToast(`Agent '${name}' created`, 'success');
-    // Open configure screen for the new agent
-    openConfigureScreen(type);
+    const catalog = await window.api.getCatalog();
+    const entry = catalog.find((c) => c.name === type);
+    if (entry?.check_ready?.login_command) {
+      showToast(`${type} uses CLI login. Run ${entry.check_ready.login_command} if authentication is needed.`, 'info');
+    } else {
+      openConfigureScreen(type);
+    }
     refreshAgentList();
     refreshDashboard();
   } catch (err) {
@@ -1508,4 +1515,3 @@ async function removeWorkspace(slug) {
 
 refreshDashboard();
 renderActivity();
-
