@@ -436,6 +436,28 @@ h1 {
   accent-color: var(--accent);
 }
 
+.claude-session-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.claude-session-option:last-child {
+  border-bottom: 0;
+}
+
+.claude-session-option:hover {
+  background: var(--bg-primary);
+}
+
 .form-actions {
   display: flex;
   gap: 8px;

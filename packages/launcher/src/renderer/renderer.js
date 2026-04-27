@@ -625,9 +625,135 @@ async function browseAgentPath() {
     const selectedPath = await window.api.pickDirectory();
     if (!selectedPath) return;
     const input = document.getElementById('new-agent-path');
-    if (input) input.value = selectedPath;
+    if (input) {
+      input.value = selectedPath;
+      await refreshClaudeSessions();
+    }
   } catch (err) {
     showToast(`Error: ${err.message}`, 'error');
+  }
+}
+
+function summarizePrompt(prompt) {
+  if (!prompt) return '';
+  const compact = String(prompt).replace(/\s+/g, ' ').trim();
+  return compact.length > 80 ? `${compact.slice(0, 80)}...` : compact;
+}
+
+function updateClaudeSessionMode() {
+  const modeToggle = document.getElementById('new-agent-session-mode');
+  const manualBox = document.getElementById('new-agent-session-manual');
+  const pickerBox = document.getElementById('new-agent-session-picker');
+  const pathValue = document.getElementById('new-agent-path')?.value?.trim();
+  if (!modeToggle || !manualBox || !pickerBox) return;
+  const canUseDetected = !!pathValue;
+  modeToggle.disabled = !canUseDetected;
+  if (!canUseDetected) modeToggle.checked = false;
+  const useDetected = !!modeToggle.checked;
+  manualBox.style.display = useDetected ? 'none' : 'block';
+  pickerBox.style.display = useDetected ? 'block' : 'none';
+}
+
+function applyClaudeSessionFilter() {
+  const comboInput = document.getElementById('new-agent-session-combo');
+  const results = document.getElementById('new-agent-session-results');
+  const hint = document.getElementById('new-agent-session-select-hint');
+  if (!comboInput || !results) return;
+
+  let sessions = [];
+  try {
+    sessions = JSON.parse(comboInput.dataset.sessions || '[]');
+  } catch {}
+
+  const keyword = comboInput.value.trim().toLowerCase();
+  const filtered = keyword
+    ? sessions.filter((session) => session.searchText.includes(keyword))
+    : sessions;
+
+  results.innerHTML = filtered.map((session) => `
+    <button
+      type="button"
+      class="claude-session-option"
+      data-session-id="${esc(session.sessionId)}"
+      data-session-label="${esc(session.label)}"
+    >
+      ${esc(session.label)}
+    </button>
+  `).join('');
+
+  if (hint) {
+    hint.textContent = filtered.length === sessions.length
+      ? `${sessions.length} Claude session(s) found for this directory.`
+      : `${filtered.length}/${sessions.length} Claude session(s) match the filter.`;
+  }
+}
+
+async function refreshClaudeSessions() {
+  const type = document.getElementById('new-agent-type')?.value;
+  const group = document.getElementById('new-agent-resume-group');
+  const comboInput = document.getElementById('new-agent-session-combo');
+  const results = document.getElementById('new-agent-session-results');
+  const hint = document.getElementById('new-agent-session-select-hint');
+  const input = document.getElementById('new-agent-resume-session');
+  const workingDir = document.getElementById('new-agent-path')?.value?.trim();
+
+  if (!group || !comboInput || !results || !hint) return;
+
+  const isClaude = type === 'claude';
+  group.style.display = isClaude ? 'block' : 'none';
+  updateClaudeSessionMode();
+  if (!isClaude) {
+    comboInput.dataset.sessions = '[]';
+    comboInput.value = '';
+    results.innerHTML = '';
+    hint.textContent = '';
+    return;
+  }
+
+  if (!workingDir) {
+    comboInput.dataset.sessions = '[]';
+    comboInput.value = '';
+    results.innerHTML = '';
+    hint.textContent = 'Set Working directory to scan Claude sessions for that project.';
+    return;
+  }
+
+  comboInput.value = '';
+  results.innerHTML = '';
+  hint.textContent = '';
+
+  try {
+    const sessions = await window.api.listClaudeSessions(workingDir);
+    if (!sessions || sessions.length === 0) {
+      comboInput.dataset.sessions = '[]';
+      results.innerHTML = '';
+      hint.textContent = 'You can still paste a session ID manually.';
+      return;
+    }
+
+    const normalized = sessions.map((session) => {
+      const modifiedLabel = session.modified ? new Date(session.modified).toLocaleString() : '';
+      const prompt = summarizePrompt(session.firstPrompt);
+      const label = [session.sessionId, modifiedLabel, prompt].filter(Boolean).join(' | ');
+      return {
+        sessionId: session.sessionId,
+        modifiedLabel,
+        prompt,
+        label,
+        searchText: [session.sessionId, modifiedLabel, prompt].filter(Boolean).join(' ').toLowerCase(),
+      };
+    });
+    comboInput.dataset.sessions = JSON.stringify(normalized);
+    applyClaudeSessionFilter();
+
+    if (input && input.value) {
+      const match = normalized.find((session) => session.sessionId === input.value.trim());
+      if (match) comboInput.value = match.sessionId;
+    }
+  } catch (err) {
+    comboInput.dataset.sessions = '[]';
+    results.innerHTML = '';
+    hint.textContent = err.message || 'Failed to scan Claude sessions.';
   }
 }
 
@@ -687,8 +813,21 @@ async function showNewAgentDialog() {
         </div>
       </div>
       <div class="form-group" id="new-agent-resume-group" style="display:none;">
-        <label>Claude Session ID (optional)</label>
-        <input type="text" id="new-agent-resume-session" placeholder="e603d1f6-e3a3-4b51-bcee-8341b9ef37df">
+        <label style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <span>Claude Session ID (optional)</span>
+          <span style="display:flex;align-items:center;gap:6px;font-weight:400;white-space:nowrap;flex-shrink:0;">
+            <input type="checkbox" id="new-agent-session-mode">
+            Use detected
+          </span>
+        </label>
+        <div id="new-agent-session-manual">
+          <input type="text" id="new-agent-resume-session" placeholder="e603d1f6-e3a3-4b51-bcee-8341b9ef37df">
+        </div>
+        <div id="new-agent-session-picker" style="display:none;">
+          <input type="text" id="new-agent-session-combo" placeholder="Type to search detected sessions...">
+          <div id="new-agent-session-results" style="margin-top:8px;max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg-secondary);"></div>
+          <div class="hint" id="new-agent-session-select-hint" style="margin-top:6px;"></div>
+        </div>
       </div>
       <div class="modal-button-row">
         <button class="btn btn-primary" data-action="do-add-agent">Create</button>
@@ -701,6 +840,9 @@ async function showNewAgentDialog() {
     const typeSelect = document.getElementById('new-agent-type');
     const resumeGroup = document.getElementById('new-agent-resume-group');
     const resumeInput = document.getElementById('new-agent-resume-session');
+    const sessionCombo = document.getElementById('new-agent-session-combo');
+    const sessionMode = document.getElementById('new-agent-session-mode');
+    const pathInput = document.getElementById('new-agent-path');
     const generateName = () => {
       const type = typeSelect.value;
       const suffix = Math.random().toString(36).slice(2, 6);
@@ -708,7 +850,35 @@ async function showNewAgentDialog() {
       const isClaude = type === 'claude';
       if (resumeGroup) resumeGroup.style.display = isClaude ? 'block' : 'none';
       if (resumeInput && !isClaude) resumeInput.value = '';
+      if (sessionMode && !isClaude) sessionMode.checked = false;
+      updateClaudeSessionMode();
+      refreshClaudeSessions();
     };
+    if (sessionCombo && resumeInput) {
+      sessionCombo.addEventListener('input', () => {
+        const selected = sessionCombo.value.trim();
+        if (selected) resumeInput.value = selected;
+        applyClaudeSessionFilter();
+      });
+    }
+    const sessionResults = document.getElementById('new-agent-session-results');
+    if (sessionResults && sessionCombo && resumeInput) {
+      sessionResults.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-session-id]');
+        if (!btn) return;
+        const sessionId = btn.dataset.sessionId || '';
+        sessionCombo.value = sessionId;
+        resumeInput.value = sessionId;
+      });
+    }
+    if (sessionMode) {
+      sessionMode.addEventListener('change', updateClaudeSessionMode);
+    }
+    if (pathInput) {
+      pathInput.addEventListener('input', updateClaudeSessionMode);
+      pathInput.addEventListener('change', refreshClaudeSessions);
+      pathInput.addEventListener('blur', refreshClaudeSessions);
+    }
     typeSelect.addEventListener('change', generateName);
     generateName();
     setTimeout(() => nameInput.focus(), 100);

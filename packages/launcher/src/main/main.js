@@ -472,6 +472,50 @@ function setupIPC() {
     }
     return result.filePaths[0];
   });
+  ipcMain.handle('shell:list-claude-sessions', async (_e, workingDir) => {
+    try {
+      if (!workingDir || typeof workingDir !== 'string') return [];
+      const resolved = path.resolve(workingDir);
+      const encoded = resolved.replace(/[:\\/]/g, '-');
+      const projectDir = path.join(os.homedir(), '.claude', 'projects', encoded);
+      if (!fs.existsSync(projectDir)) return [];
+
+      const indexPath = path.join(projectDir, 'sessions-index.json');
+      if (fs.existsSync(indexPath)) {
+        const raw = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
+        const entries = Array.isArray(raw?.entries) ? raw.entries : [];
+        return entries
+          .slice()
+          .sort((a, b) => new Date(b.modified || 0).getTime() - new Date(a.modified || 0).getTime())
+          .map((entry) => ({
+            sessionId: entry.sessionId,
+            firstPrompt: entry.firstPrompt || '',
+            modified: entry.modified || null,
+            created: entry.created || null,
+            messageCount: entry.messageCount || 0,
+            projectPath: entry.projectPath || resolved,
+          }));
+      }
+
+      return fs.readdirSync(projectDir)
+        .filter((name) => name.endsWith('.jsonl'))
+        .map((name) => {
+          const sessionId = name.replace(/\.jsonl$/, '');
+          const stat = fs.statSync(path.join(projectDir, name));
+          return {
+            sessionId,
+            firstPrompt: '',
+            modified: stat.mtime.toISOString(),
+            created: stat.birthtime.toISOString(),
+            messageCount: 0,
+            projectPath: resolved,
+          };
+        })
+        .sort((a, b) => new Date(b.modified || 0).getTime() - new Date(a.modified || 0).getTime());
+    } catch {
+      return [];
+    }
+  });
   ipcMain.handle('shell:open-terminal', (_e, cmd) => {
     const { spawn } = require('child_process');
     const { getEnhancedEnv } = (() => { try { return require(path.join(os.homedir(), '.openagents', 'nodejs', 'node_modules', '@openagents-org', 'agent-launcher')).paths; } catch { try { return require('@openagents-org/agent-launcher').paths; } catch { return { getEnhancedEnv: () => process.env }; } } })();

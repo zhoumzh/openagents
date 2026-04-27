@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('api', {
   // Shell
   openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
   pickDirectory: () => ipcRenderer.invoke('shell:pick-directory'),
+  listClaudeSessions: (workingDir) => ipcRenderer.invoke('shell:list-claude-sessions', workingDir),
   shellExec: (cmd) => ipcRenderer.invoke('shell:exec', cmd),
   openTerminal: (cmd) => ipcRenderer.invoke('shell:open-terminal', cmd),
   updateCore: () => ipcRenderer.invoke('core:update'),
