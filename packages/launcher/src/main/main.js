@@ -176,102 +176,12 @@ function findNpmCommand() {
   // Fallback to npm.cmd (may fail on non-ASCII usernames)
   if (process.platform !== 'win32') {
     const npmBin = path.join(PORTABLE_NODE_DIR, 'bin', 'npm');
-    if (fs.existsSync(npmBin)) return `"${npmBin}"`;
+    if (fs.existsSync(npmBin)) return \`"\${npmBin}"\`;
   }
   return null;
 }
 
-/**
- * Add a package to the prefix's package.json so npm --prefix won't prune it.
- * Tarball-extracted packages aren't tracked by npm — any subsequent
- * `npm install --prefix` would delete them as extraneous.
- */
-function _addToPrefixPackageJson(pkg, version) {
-  const pkgJsonPath = path.join(PORTABLE_NODE_DIR, 'package.json');
-  let data = {};
-  try { data = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf-8')); } catch {}
-  if (!data.dependencies) data.dependencies = {};
-  data.dependencies[pkg] = version;
-  try { fs.writeFileSync(pkgJsonPath, JSON.stringify(data, null, 2) + '\n', 'utf-8'); } catch {}
-}
-
-let _updateSplash = null; // set by app.whenReady, used by ensureCoreLibrary
-
-async function ensureCoreLibrary() {
-  const corePkgPath = path.join(GLOBAL_MODULES, CORE_PKG, 'package.json');
-  let installedVersion = null;
-
-  if (fs.existsSync(corePkgPath)) {
-    try { installedVersion = JSON.parse(fs.readFileSync(corePkgPath, 'utf-8')).version; } catch {}
-  }
-
-  // Always try to update to latest on startup
-  // Use direct tarball download from GitLab
-  const https = require('https');
-  try {
-    if (!installedVersion) {
-      slog('Core library not found — installing from GitLab...');
-      if (_updateSplash) _updateSplash('Installing core library...', 65, 'GitLab Latest');
-      
-      const tgzUrl = 'https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/agent-launcher-latest.tgz';
-      const tgzPath = path.join(os.tmpdir(), `agent-launcher-latest.tgz`);
-      const destDir = path.join(GLOBAL_MODULES, CORE_PKG);
-
-      await downloadFile(https, tgzUrl, tgzPath, null);
-      // Remove old version
-      try { fs.rmSync(destDir, { recursive: true, force: true }); } catch {}
-      fs.mkdirSync(destDir, { recursive: true });
-      execSync(`tar -xzf "${tgzPath}" -C "${destDir}" --strip-components=1`, { timeout: 60000, stdio: 'pipe' });
-      try { fs.unlinkSync(tgzPath); } catch {}
-
-      const newVersion = (() => { try { return JSON.parse(fs.readFileSync(corePkgPath, 'utf-8')).version; } catch { return null; } })();
-      if (newVersion) {
-        slog('Core library installed: v' + newVersion);
-        if (_updateSplash) _updateSplash('Core library ready', 80, 'v' + newVersion);
-        installedVersion = newVersion;
-        // Register in prefix package.json so npm --prefix won't prune it
-        _addToPrefixPackageJson(CORE_PKG, newVersion);
-      }
-    } else {
-      slog('Core library v' + installedVersion + ' (already installed)');
-      if (_updateSplash) _updateSplash('Core library ready', 80, 'v' + installedVersion);
-    }
-  } catch (e) {
-    slog('Core install from GitLab failed: ' + e.message);
-  }
-
-  coreVersion = installedVersion;
-
-  // npm --prefix prunes packages not in package.json — npm itself gets deleted.
-  // Reinstall npm if it was removed by the core update.
-  const npmCheck = path.join(PORTABLE_NODE_DIR, 'node_modules', 'npm', 'bin', 'npm-cli.js');
-  if (!fs.existsSync(npmCheck)) {
-    slog('npm was removed by --prefix install — reinstalling...');
-    try {
-      const https = require('https');
-      const npmTgz = path.join(os.tmpdir(), 'npm-reinstall.tgz');
-      const npmDir = path.join(PORTABLE_NODE_DIR, 'node_modules', 'npm');
-      await downloadFile(https, 'https://registry.npmjs.org/npm/-/npm-10.9.2.tgz', npmTgz, null);
-      fs.mkdirSync(npmDir, { recursive: true });
-      execSync(`tar -xzf "${npmTgz}" -C "${npmDir}" --strip-components=1`, { timeout: 60000, stdio: 'pipe' });
-      try { fs.unlinkSync(npmTgz); } catch {}
-      slog('npm reinstalled');
-    } catch (e) {
-      slog('npm reinstall failed: ' + e.message);
-    }
-  }
-
-  // Reload agent manager with the (potentially updated) core
-  if (installedVersion && agentManager) {
-    agentManager.reloadCore();
-  }
-}
-
-async function checkCoreUpdate() {
-  // GitLab 二开模式下，通过手动重新运行 install.sh 或点击前端页面下载覆盖来更新。
-  // 取消自动从 NPM 检查更新，避免覆盖内部包。
-  slog('checkCoreUpdate: skipped — using internal GitLab distribution');
-}
+let _updateSplash = null; // set by app.whenReady
 
 function createWindow() {
   if (mainWindow) {
@@ -750,10 +660,6 @@ app.whenReady().then(async () => {
     }
   }
 
-  // Step 2: Ensure core library (install or update)
-  updateSplash('Checking for updates...', 60);
-  _updateSplash = updateSplash;
-
   // ── PATH setup ──
   if (process.platform === 'win32') {
     const pathDirs = (process.env.PATH || '').toLowerCase().split(';');
@@ -776,8 +682,13 @@ app.whenReady().then(async () => {
     }
   }
 
-  // Ensure core library is installed and check for updates
-  await ensureCoreLibrary();
+  // Read coreVersion
+  try {
+    const corePkgPath = path.join(GLOBAL_MODULES, CORE_PKG, 'package.json');
+    if (fs.existsSync(corePkgPath)) {
+      coreVersion = JSON.parse(fs.readFileSync(corePkgPath, 'utf-8')).version;
+    }
+  } catch {}
 
   // Add global modules path
   if (fs.existsSync(GLOBAL_MODULES) && !require('module').globalPaths.includes(GLOBAL_MODULES)) {

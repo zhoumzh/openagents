@@ -311,6 +311,13 @@ else
     warn "Failed to download openagentsui from GitLab. UI CLI will not be available."
 fi
 
+# Fetch internal_version.json for auto-updates
+info "Fetching internal version info for auto-updates..."
+VERSION_URL="https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-openagents/packages/generic/openagents/latest/version.json"
+mkdir -p "$HOME/.openagents"
+curl -fsSL "$VERSION_URL" -o "$HOME/.openagents/internal_version.json" || true
+
+
 # Portable node at ~/.openagents/nodejs/bin/ is always installed above.
 # Ensure npm is also available there (tarball includes it).
 BIN_DIR="$PREFIX_DIR/bin"

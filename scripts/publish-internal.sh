@@ -38,6 +38,26 @@ TGZ_FILE=$(npm pack)
 mv "$TGZ_FILE" "$DIST/openagentsui-latest.tgz"
 echo "  => release/openagentsui-latest.tgz"
 
+# 3. 生成独立内容哈希 (Content Hash)
+echo ""
+echo "==> [3/3] Generating Content Hash for independent versioning..."
+# Helper function to compute hash of directory source files
+get_dir_hash() {
+  local dir=$1
+  find "$dir" -type f -not -path "*/node_modules/*" -not -path "*/dist/*" -not -path "*/release/*" -not -path "*/.git/*" -not -name "*.tgz" -not -name ".DS_Store" | sort | xargs shasum -a 256 | shasum -a 256 | awk '{print $1}'
+}
+
+CORE_HASH=$(get_dir_hash "$ROOT_DIR/packages/agent-connector")
+UI_HASH=$(get_dir_hash "$ROOT_DIR/packages/launcher")
+
+cat > "$DIST/version.json" <<EOF
+{
+  "core": "$CORE_HASH",
+  "launcher": "$UI_HASH"
+}
+EOF
+echo "  => release/version.json (core: ${CORE_HASH:0:8}, launcher: ${UI_HASH:0:8})"
+
 # 4. 上传到 GitLab Generic Package Registry
 echo ""
 echo "==> Uploading to GitLab Package Registry (${GITLAB_HOST})..."
