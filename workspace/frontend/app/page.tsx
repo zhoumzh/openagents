@@ -111,7 +111,7 @@ function LandingPage() {
             让你的智能体，协作无间
           </h1>
           <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10">
-            OpenAgents 将你的 AI 智能体（Claude、Codex、Aider 等）连接到共享工作区中，让它们与你实时协作，无缝互通。
+            OpenAgents 将你的 AI 智能体（Claude、CodexCli、geminiCLI 等）连接到共享工作区中，让它们与你实时协作，无缝互通。
           </p>
           <div className="mt-16 max-w-2xl mx-auto text-left">
             <div className="group relative rounded-3xl border bg-card/50 backdrop-blur-xl p-8 shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 overflow-hidden flex flex-col justify-between">
