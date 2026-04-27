@@ -65,6 +65,18 @@ describe('CLI', () => {
     }
   });
 
+  it('create requires an explicit type', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ac-cli-'));
+    try {
+      assert.throws(
+        () => runWithConfig(tmpDir, 'create', 'test-agent'),
+        (e) => (e.stderr + e.stdout).includes('Usage: agn create <name> --type <type>'),
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it('create / list / remove agent with temp config', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ac-cli-'));
     try {

@@ -241,6 +241,64 @@ UI_TARBALL_URL="https://gitlab.chehejia.com/api/v4/projects/zhoumingzhu%2Fli-ope
 info "Downloading OpenAgents UI from GitLab..."
 mkdir -p "$UI_DIR"
 if curl -fsSL "$UI_TARBALL_URL" | tar xz -C "$UI_DIR" --strip-components=1; then
+    # The bootstrap installer should only install OpenAgents components.
+    # OpenClaw remains an explicit runtime install via `agn install openclaw`.
+    node -e "
+        const fs = require('fs');
+        const path = require('path');
+        const dir = process.argv[1];
+        const depSections = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
+        const bundleSections = ['bundledDependencies', 'bundleDependencies'];
+        function stripDeps(obj) {
+            if (!obj) return false;
+            let changed = false;
+            for (const section of depSections) {
+                if (obj[section] && Object.prototype.hasOwnProperty.call(obj[section], 'openclaw')) {
+                    delete obj[section].openclaw;
+                    changed = true;
+                }
+            }
+            for (const section of bundleSections) {
+                if (Array.isArray(obj[section])) {
+                    const next = obj[section].filter((name) => name !== 'openclaw');
+                    if (next.length !== obj[section].length) {
+                        obj[section] = next;
+                        changed = true;
+                    }
+                }
+            }
+            return changed;
+        }
+        function updateJson(rel) {
+            const file = path.join(dir, rel);
+            if (!fs.existsSync(file)) return;
+            const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+            let changed = stripDeps(data);
+            if (data.packages) {
+                changed = stripDeps(data.packages['']) || changed;
+                if (data.packages['node_modules/openclaw']) {
+                    delete data.packages['node_modules/openclaw'];
+                    changed = true;
+                }
+            }
+            if (data.dependencies && data.dependencies.openclaw) {
+                delete data.dependencies.openclaw;
+                changed = true;
+            }
+            if (changed) fs.writeFileSync(file, JSON.stringify(data, null, 2) + '\n');
+        }
+        updateJson('package.json');
+        updateJson('package-lock.json');
+        updateJson('npm-shrinkwrap.json');
+        for (const rel of [
+            'node_modules/openclaw',
+            'node_modules/.bin/openclaw',
+            'node_modules/.bin/openclaw.cmd',
+            'node_modules/.bin/openclaw.ps1',
+        ]) {
+            fs.rmSync(path.join(dir, rel), { recursive: true, force: true });
+        }
+    " "$UI_DIR" 2>/dev/null || true
     info "Installing UI dependencies (Electron)..."
     export ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
     (cd "$UI_DIR" && "$NPM" install --omit=dev --silent && "$NPM" install electron@^33.0.0 --no-save --silent || true)

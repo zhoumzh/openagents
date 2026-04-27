@@ -117,8 +117,13 @@ async function cmdStatus(connector) {
 
 async function cmdCreate(connector, flags, positional) {
   const name = positional[0];
-  if (!name) { print('Usage: agn create <name> [--type <type>]'); return; }
-  const type = flags.type || 'openclaw';
+  const type = typeof flags.type === 'string' ? flags.type.trim() : '';
+  if (!name || !type) {
+    print('Usage: agn create <name> --type <type>');
+    print('Choose a runtime with `agn search`; install explicitly with `agn install <type>`.');
+    process.exitCode = 1;
+    return;
+  }
   const role = flags.role || 'worker';
 
   try {
@@ -489,7 +494,7 @@ Commands:
   down                        Stop daemon
   status                      Show agent status
   list                        List configured agents
-  create <name> [--type T]    Create a new agent
+  create <name> --type T      Create a new agent
   remove <name>               Remove an agent
   start <name>                Start a single agent
   stop <name>                 Stop a single agent
