@@ -21,24 +21,17 @@ echo "   OpenAgents 私有化构建与发布脚本"
 echo "================================================="
 
 # 1. 构建命令行核心包 (CLI)
-echo "==> [1/3] Building core components (agent-connector)..."
+echo "==> [1/2] Building core components (agent-connector)..."
 cd "$ROOT_DIR/packages/agent-connector"
 rm -f *.tgz
 TGZ_FILE=$(npm pack)
 mv "$TGZ_FILE" "$DIST/agent-launcher-latest.tgz"
 echo "  => release/agent-launcher-latest.tgz"
 
-# 2. 构建桌面端 (Launcher)
-echo ""
-echo "==> [2/3] Building macOS desktop app (Launcher)..."
-cd "$ROOT_DIR/packages/launcher"
-npm run build:mac
-find dist -name "*.zip" -exec cp {} "$DIST/" \;
-echo "  => release/*.zip"
 
-# 3. 构建 Launcher UI 的 CLI 安装包
+# 2. 构建 Launcher UI 的 CLI 安装包
 echo ""
-echo "==> [3/3] Building UI CLI package (openagentsui)..."
+echo "==> [2/2] Building UI CLI package (openagentsui)..."
 cd "$ROOT_DIR/packages/launcher"
 rm -f *.tgz
 TGZ_FILE=$(npm pack)
