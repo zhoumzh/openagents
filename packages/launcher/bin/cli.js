@@ -47,9 +47,9 @@ function downloadAndExtract(url, destDir, name) {
         file.close();
         try {
           fs.mkdirSync(destDir, { recursive: true });
-          execSync(\`tar -xzf "\${tmpTgz}" -C "\${destDir}" --strip-components=1\`, { stdio: 'ignore' });
+          execSync(`tar -xzf "${tmpTgz}" -C "${destDir}" --strip-components=1`, { stdio: 'ignore' });
         } catch (e) {
-          process.stderr.write(\`[launcher] Failed to extract \${name}: \${e.message}\\n\`);
+          process.stderr.write(`[launcher] Failed to extract ${name}: ${e.message}\n`);
         }
         try { fs.unlinkSync(tmpTgz); } catch {}
         resolve();
@@ -87,7 +87,7 @@ async function checkAndUpdate() {
       fs.mkdirSync(path.dirname(INTERNAL_VERSION_FILE), { recursive: true });
       fs.writeFileSync(INTERNAL_VERSION_FILE, JSON.stringify(local, null, 2));
     } catch {}
-    process.stdout.write(\`[launcher] Updates applied successfully.\\n\`);
+    process.stdout.write(`[launcher] Updates applied successfully.\n`);
   }
 }
 

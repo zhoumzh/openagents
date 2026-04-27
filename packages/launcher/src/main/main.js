@@ -176,7 +176,7 @@ function findNpmCommand() {
   // Fallback to npm.cmd (may fail on non-ASCII usernames)
   if (process.platform !== 'win32') {
     const npmBin = path.join(PORTABLE_NODE_DIR, 'bin', 'npm');
-    if (fs.existsSync(npmBin)) return \`"\${npmBin}"\`;
+    if (fs.existsSync(npmBin)) return `"${npmBin}"`;
   }
   return null;
 }

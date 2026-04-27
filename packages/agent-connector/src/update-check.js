@@ -45,14 +45,14 @@ async function checkForUpdate() {
 }
 
 function runUpdate(remoteData) {
-  process.stderr.write(\`[launcher] Downloading core update...\\n\`);
-  const tmpTgz = path.join(os.tmpdir(), \`oa_core_update_\${Date.now()}.tgz\`);
+  process.stderr.write(`[launcher] Downloading core update...\n`);
+  const tmpTgz = path.join(os.tmpdir(), `oa_core_update_${Date.now()}.tgz`);
   
   return new Promise((resolve) => {
     const file = fs.createWriteStream(tmpTgz);
     https.get(CORE_URL, (res) => {
       if (res.statusCode !== 200) {
-        process.stderr.write(\`[launcher] Failed to download core: HTTP \${res.statusCode}\\n\`);
+        process.stderr.write(`[launcher] Failed to download core: HTTP ${res.statusCode}\n`);
         file.close();
         resolve(false);
         return;
@@ -62,7 +62,7 @@ function runUpdate(remoteData) {
         file.close();
         try {
           fs.mkdirSync(CORE_DIR, { recursive: true });
-          execSync(\`tar -xzf "\${tmpTgz}" -C "\${CORE_DIR}" --strip-components=1\`, { stdio: 'ignore' });
+          execSync(`tar -xzf "${tmpTgz}" -C "${CORE_DIR}" --strip-components=1`, { stdio: 'ignore' });
           
           // Update local version file
           let local = {};
@@ -79,7 +79,7 @@ function runUpdate(remoteData) {
           try { fs.unlinkSync(tmpTgz); } catch {}
           resolve(true);
         } catch (e) {
-          process.stderr.write(\`[launcher] Failed to extract core: \${e.message}\\n\`);
+          process.stderr.write(`[launcher] Failed to extract core: ${e.message}\n`);
           try { fs.unlinkSync(tmpTgz); } catch {}
           resolve(false);
         }
@@ -100,7 +100,7 @@ function promptYes(question, timeoutMs = 30000) {
     const timer = setTimeout(() => {
       if (answered) return;
       answered = true;
-      process.stderr.write('\\n');
+      process.stderr.write('\n');
       rl.close();
       resolve(false);
     }, timeoutMs);
@@ -121,27 +121,27 @@ async function notifyAndMaybeUpdate() {
   if (!info || !info.isNewer) return;
 
   process.stderr.write(
-    \`\\n[launcher] Core update available: \${info.current.slice(0,8)} → \${info.latest.slice(0,8)}\\n\`
+    `\n[launcher] Core update available: ${info.current.slice(0,8)} → ${info.latest.slice(0,8)}\n`
   );
 
   const interactive = process.stdin.isTTY && process.stdout.isTTY;
   if (!interactive) {
-    process.stderr.write('[launcher] Run `agn update` to upgrade.\\n\\n');
+    process.stderr.write('[launcher] Run `agn update` to upgrade.\n\n');
     return;
   }
 
   const accepted = await promptYes('[launcher] Update now? [Y/n] ');
   if (!accepted) {
-    process.stderr.write('[launcher] Skipped. Run `agn update` later to upgrade.\\n\\n');
+    process.stderr.write('[launcher] Skipped. Run `agn update` later to upgrade.\n\n');
     return;
   }
 
   const ok = await runUpdate(info.remoteData);
   if (ok) {
-    process.stderr.write(\`[launcher] Updated to \${info.latest.slice(0,8)}. Re-run your command.\\n\`);
+    process.stderr.write(`[launcher] Updated to ${info.latest.slice(0,8)}. Re-run your command.\n`);
     process.exit(0);
   }
-  process.stderr.write('[launcher] Update failed — continuing with current version.\\n\\n');
+  process.stderr.write('[launcher] Update failed — continuing with current version.\n\n');
 }
 
 module.exports = {
