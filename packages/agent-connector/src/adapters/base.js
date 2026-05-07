@@ -48,12 +48,13 @@ class BaseAdapter {
     this._titledSessions = new Set();
     this._mode = 'execute';
     this._lastControlId = null;
+    this._controlWake = null;
     // Per-channel task tracking for parallel execution
     this._channelBusy = new Set();
     this._channelQueues = {};
     this._log = (msg) => {
       const ts = new Date().toISOString();
-      console.log(`${ts} INFO adapter: ${msg}`);
+      console.log(`${ts} INFO adapter [${this.agentName}]: ${msg}`);
     };
   }
 
@@ -81,7 +82,7 @@ class BaseAdapter {
     await this._skipExistingEvents();
 
     const heartbeatInterval = setInterval(() => this._heartbeat(), 30000);
-    const controlInterval = setInterval(() => this._pollControl(), 2000);
+    const controlPoller = this._controlPollerLoop();
 
     try {
       // Send initial heartbeat
@@ -92,8 +93,9 @@ class BaseAdapter {
       await this._pollLoop();
     } finally {
       this._running = false;
+      this._wakeControlPoller();
       clearInterval(heartbeatInterval);
-      clearInterval(controlInterval);
+      try { await controlPoller; } catch {}
       try {
         await this.client.disconnect(this.workspaceId, this.agentName, this.token);
       } catch {}
@@ -109,20 +111,15 @@ class BaseAdapter {
   // ------------------------------------------------------------------
 
   async _skipExistingEvents() {
-    try {
-      while (true) {
-        const { cursor } = await this.client.pollPending(
-          this.workspaceId, this.agentName, this.token,
-          { after: this._lastEventId, limit: 200 }
-        );
-        if (!cursor || cursor === this._lastEventId) break;
-        this._lastEventId = cursor;
-      }
-      if (this._lastEventId) {
-        this._log(`Skipped existing events, cursor at ${this._lastEventId}`);
-      }
-    } catch (e) {
-      this._log(`Failed to skip existing events: ${e.message}`);
+    // Jump straight to the head with one server call. Pagination from the
+    // start was slow and brittle: on a busy workspace it could take many
+    // minutes to chew through historical events 200 at a time, leaving the
+    // agent silently behind, and a transient mid-paginate empty response
+    // (e.g. shared-cache race) would strand the cursor at a non-head id.
+    const head = await this.client.getHeadEventId(this.workspaceId, this.token);
+    if (head) {
+      this._lastEventId = head;
+      this._log(`Skipped existing events, cursor at ${head}`);
     }
   }
 
@@ -175,6 +172,40 @@ class BaseAdapter {
    * Handle adapter-specific control actions. Override in subclasses.
    */
   async _onControlAction(_action, _payload) {}
+
+  _hasActiveWork() {
+    return this._channelBusy.size > 0;
+  }
+
+  _controlPollDelayMs() {
+    return this._hasActiveWork() ? 250 : 2000;
+  }
+
+  _wakeControlPoller() {
+    if (this._controlWake) {
+      this._controlWake();
+      this._controlWake = null;
+    }
+  }
+
+  async _sleepUntilControlPollDue(delayMs) {
+    await new Promise((resolve) => {
+      const timeout = setTimeout(resolve, delayMs);
+      this._controlWake = () => {
+        clearTimeout(timeout);
+        resolve();
+      };
+    });
+    this._controlWake = null;
+  }
+
+  async _controlPollerLoop() {
+    while (this._running) {
+      await this._pollControl();
+      if (!this._running) break;
+      await this._sleepUntilControlPollDue(this._controlPollDelayMs());
+    }
+  }
 
   // ------------------------------------------------------------------
   // Poll loop
@@ -231,8 +262,11 @@ class BaseAdapter {
         idleCount++;
       }
 
-      // Aggressive polling for snappier experience: 1s active, up to 3s idle
-      const delay = incoming.length > 0 ? 1000 : Math.min(1000 + idleCount * 500, 3000);
+      // Adaptive polling: 2s active, up to 15s idle.
+      // Each connected agent runs this loop, so faster rates multiply across
+      // every workspace member — keep this conservative and tune separately
+      // with a load-impact analysis on workspace-endpoint.
+      const delay = incoming.length > 0 ? 2000 : Math.min(2000 + idleCount * 1000, 15000);
       await this._sleep(delay);
     }
   }
@@ -259,6 +293,7 @@ class BaseAdapter {
 
     // Run channel worker (don't await — parallel execution)
     this._channelWorker(channel, msg);
+    this._wakeControlPoller();
   }
 
   async _channelWorker(channel, msg) {

@@ -34,6 +34,7 @@ export function ChatInput({ onSend, disabled, className, agents = [], draft, onD
   const [mentionIndex, setMentionIndex] = React.useState(0);
   const [pendingFiles, setPendingFiles] = React.useState<PendingFile[]>([]);
   const [isDragging, setIsDragging] = React.useState(false);
+  const [isFocused, setIsFocused] = React.useState(false);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const dragCountRef = React.useRef(0);
@@ -64,8 +65,10 @@ export function ChatInput({ onSend, disabled, className, agents = [], draft, onD
       .filter((name) => agentNames.includes(name));
   };
 
-  const filteredAgents = agents.filter((a) =>
-    a.agentName.toLowerCase().includes(mentionFilter.toLowerCase())
+  // Only suggest online agents — mentioning offline ones never resolves and
+  // just clutters the picker on long-lived workspaces.
+  const filteredAgents = agents.filter(
+    (a) => a.status === 'online' && a.agentName.toLowerCase().includes(mentionFilter.toLowerCase())
   );
 
   const addFiles = React.useCallback((files: FileList | File[]) => {
@@ -163,6 +166,13 @@ export function ChatInput({ onSend, disabled, className, agents = [], draft, onD
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+      return;
+    }
+
+    // Escape blurs the textarea so global shortcuts (1-9, i, etc.) work again.
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      textareaRef.current?.blur();
     }
   };
 
@@ -341,17 +351,38 @@ export function ChatInput({ onSend, disabled, className, agents = [], draft, onD
           </div>
         )}
 
-        <textarea
-          ref={textareaRef}
-          value={message}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder={agents.length > 1 ? 'Message... (use @ to mention an agent)' : 'Message...'}
-          rows={1}
-          disabled={disabled}
-          className="flex-1 border-0 bg-transparent shadow-none focus:outline-none placeholder:text-muted-foreground h-auto px-0 text-sm py-2 resize-none"
-        />
+        <div className="relative flex-1">
+          <textarea
+            ref={textareaRef}
+            value={message}
+            onChange={handleInput}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            placeholder={agents.length > 1 ? 'Message... (use @ to mention an agent)' : 'Message...'}
+            rows={1}
+            disabled={disabled}
+            data-chat-input
+            className="w-full border-0 bg-transparent shadow-none focus:outline-none placeholder:text-muted-foreground h-auto px-0 text-sm py-2 resize-none"
+          />
+          {/* Shortcut hint: 'i' when not focused, 'esc' when focused.
+              Hidden once the user starts typing so it doesn't compete
+              with the actual content. */}
+          {!message && (
+            <kbd
+              className={cn(
+                'pointer-events-none absolute right-1 top-1/2 -translate-y-1/2',
+                'flex items-center justify-center rounded text-[9px] font-mono font-medium',
+                'bg-muted text-muted-foreground border border-input',
+                isFocused ? 'h-4 px-1' : 'size-4'
+              )}
+              title={isFocused ? 'Press Esc to leave the input' : 'Press i to focus the input'}
+            >
+              {isFocused ? 'esc' : 'i'}
+            </kbd>
+          )}
+        </div>
 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">

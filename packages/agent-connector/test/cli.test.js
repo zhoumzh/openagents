@@ -82,6 +82,7 @@ describe('CLI', () => {
     try {
       const createOut = runWithConfig(tmpDir, 'create', 'test-agent', '--type', 'claude');
       assert.ok(createOut.includes("'test-agent' created"));
+      assert.ok(!createOut.includes('Installing claude...'));
 
       const listOut = runWithConfig(tmpDir, 'list');
       assert.ok(listOut.includes('test-agent'));
@@ -107,6 +108,11 @@ describe('CLI', () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it('help mentions optional create install flag', () => {
+    const out = run('help');
+    assert.ok(out.includes('--install'));
   });
 
   it('status with temp config shows no daemon', () => {

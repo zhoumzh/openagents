@@ -24,6 +24,7 @@ interface WorkspaceContextValue {
   error: string | null;
   lastMessageBySession: Record<string, LastMessageInfo>;
   activeSessionIds: Set<string>;
+  stoppingSessionIds: Set<string>;
   completedSessionIds: Set<string>;
   monitorMode: boolean;
   acknowledgeCompletion: (sessionId: string) => void;
@@ -33,7 +34,9 @@ interface WorkspaceContextValue {
   updateAgentMode: (agentName: string, mode: string) => void;
   toggleAgentMode: (agentName: string) => void;
   stopAllAgents: () => Promise<void>;
-  setCurrentSessionId: (id: string | null) => void;
+  setCurrentSessionId: (id: string | null, options?: { skipFocus?: boolean }) => void;
+  /** Read-and-clear: was the most recent setCurrentSessionId asked to skip auto-focus? */
+  consumeSkipFocus: () => boolean;
   setSelectedFileId: (id: string | null) => void;
   setCurrentFilePath: (path: string) => void;
   createSession: (opts?: { title?: string; master?: string; participants?: string[]; resumeFrom?: string }) => Promise<WorkspaceSession>;
@@ -89,7 +92,12 @@ export function WorkspaceProvider({
   const [agents, setAgents] = useState<WorkspaceAgent[]>([]);
   const [sessions, setSessions] = useState<WorkspaceSession[]>([]);
   const [currentSessionId, _setCurrentSessionId] = useState<string | null>(null);
-  const setCurrentSessionId = useCallback((id: string | null) => {
+  // Set by setCurrentSessionId({ skipFocus: true }) and consumed by ChatView's
+  // auto-focus effect, so keyboard-driven thread switches (1-9) don't steal
+  // focus from the user. Cleared on read.
+  const skipFocusRef = useRef(false);
+  const setCurrentSessionId = useCallback((id: string | null, options?: { skipFocus?: boolean }) => {
+    if (options?.skipFocus) skipFocusRef.current = true;
     _setCurrentSessionId(id);
     if (id) {
       setCompletedSessionIds((prev) => {
@@ -100,10 +108,18 @@ export function WorkspaceProvider({
       });
     }
   }, []);
+  const consumeSkipFocus = useCallback(() => {
+    const v = skipFocusRef.current;
+    skipFocusRef.current = false;
+    return v;
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastMessageBySession, setLastMessageBySession] = useState<Record<string, LastMessageInfo>>({});
   const [activeSessionIds, setActiveSessionIds] = useState<Set<string>>(new Set());
+  const [stoppingSessionIds, setStoppingSessionIds] = useState<Set<string>>(new Set());
+  const stoppingSessionIdsRef = useRef(stoppingSessionIds);
+  stoppingSessionIdsRef.current = stoppingSessionIds;
   const [completedSessionIds, setCompletedSessionIds] = useState<Set<string>>(new Set());
   const [agentModes, setAgentModes] = useState<Record<string, string>>({});
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
@@ -158,6 +174,14 @@ export function WorkspaceProvider({
   }, []);
 
   const updateLastMessage = useCallback((sessionId: string, senderName: string, content: string, isStatus?: boolean) => {
+    if (!isStatus || /stopped|stopping failed/i.test(content)) {
+      setStoppingSessionIds((prev) => {
+        if (!prev.has(sessionId)) return prev;
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
+      });
+    }
     setLastMessageBySession((prev) => {
       if (!content && !prev[sessionId]) return prev;
       const existing = prev[sessionId];
@@ -175,7 +199,7 @@ export function WorkspaceProvider({
   const setSessionActive = useCallback((sessionId: string, active: boolean) => {
     setActiveSessionIds((prev) => {
       const next = new Set(prev);
-      if (active) next.add(sessionId);
+      if (active && !stoppingSessionIdsRef.current.has(sessionId)) next.add(sessionId);
       else next.delete(sessionId);
       return next;
     });
@@ -202,10 +226,40 @@ export function WorkspaceProvider({
   }, [agentModes]);
 
   const stopAllAgents = useCallback(async () => {
-    await Promise.allSettled(
+    const sessionIds = Array.from(activeSessionIds);
+    if (sessionIds.length === 0) return;
+
+    setStoppingSessionIds((prev) => {
+      const next = new Set(prev);
+      sessionIds.forEach((sid) => next.add(sid));
+      return next;
+    });
+    setActiveSessionIds((prev) => {
+      const next = new Set(prev);
+      sessionIds.forEach((sid) => next.delete(sid));
+      return next;
+    });
+    setLastMessageBySession((prev) => {
+      const next = { ...prev };
+      sessionIds.forEach((sid) => {
+        next[sid] = { senderName: 'system', content: 'Stopping...', isStatus: true };
+      });
+      return next;
+    });
+
+    const sendStop = () => Promise.allSettled(
       agents.map((a) => workspaceApi.sendAgentControl(a.agentName, 'stop'))
     );
-  }, [agents]);
+    await sendStop();
+
+    window.setTimeout(() => {
+      setStoppingSessionIds((prevStopping) => {
+        const stillStopping = sessionIds.filter((sid) => prevStopping.has(sid));
+        if (stillStopping.length > 0) void sendStop();
+        return prevStopping;
+      });
+    }, 3000);
+  }, [activeSessionIds, agents]);
 
   // Configure API client on mount
   useEffect(() => {
@@ -335,11 +389,34 @@ export function WorkspaceProvider({
             const newInactive = new Set<string>();
             for (const [sid, info] of Object.entries(batch)) {
               const wasStatus = prev[sid]?.isStatus;
+              const isStopping = stoppingSessionIds.has(sid);
               if (info.isStatus) {
-                newActive.add(sid);
-              } else if (wasStatus && !info.isStatus) {
+                if (isStopping) {
+                  if (/stopped|stopping failed/i.test(info.content)) {
+                    setStoppingSessionIds((s) => {
+                      if (!s.has(sid)) return s;
+                      const next = new Set(s);
+                      next.delete(sid);
+                      return next;
+                    });
+                    newInactive.add(sid);
+                  }
+                } else {
+                  newActive.add(sid);
+                }
+              } else {
+                setStoppingSessionIds((s) => {
+                  if (!s.has(sid)) return s;
+                  const next = new Set(s);
+                  next.delete(sid);
+                  return next;
+                });
+                // Latest event is a real message — session is not working.
+                // Always clear active so the shimmer doesn't stick when the
+                // status→chat transition happens between polls or while
+                // chat-view is unmounted (homepage / monitor mode).
                 newInactive.add(sid);
-                newCompleted.add(sid);
+                if (wasStatus) newCompleted.add(sid);
               }
             }
             if (newActive.size > 0 || newInactive.size > 0) {
@@ -370,7 +447,7 @@ export function WorkspaceProvider({
     } catch {
       // Non-critical — keep existing state
     }
-  }, [workspaceId]);
+  }, [workspaceId, stoppingSessionIds]);
 
   // Alias for backward compat
   const refreshAgents = refreshDiscovery;
@@ -734,6 +811,7 @@ export function WorkspaceProvider({
         error,
         lastMessageBySession,
         activeSessionIds,
+        stoppingSessionIds,
         completedSessionIds,
         monitorMode,
         acknowledgeCompletion,
@@ -744,6 +822,7 @@ export function WorkspaceProvider({
         toggleAgentMode,
         stopAllAgents,
         setCurrentSessionId,
+        consumeSkipFocus,
         setSelectedFileId,
         currentFilePath,
         setCurrentFilePath,

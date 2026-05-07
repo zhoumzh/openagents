@@ -34,6 +34,7 @@ class ClaudeAdapter extends BaseAdapter {
     this.resumeSessionId = opts.resumeSessionId || null;
     this._channelSessions = {}; // channel → Claude CLI session_id
     this._channelProcesses = {}; // channel → child process
+    this._stoppingChannels = new Set();
     this._sessionsFile = path.join(
       os.homedir(), '.openagents', 'sessions',
       `${this.workspaceId}_${this.agentName}.json`
@@ -65,42 +66,83 @@ class ClaudeAdapter extends BaseAdapter {
 
   async _onControlAction(action, _payload) {
     if (action === 'stop') {
-      await this._stopAllProcesses();
+      await this._stopAllProcesses('Execution stopped by user.');
     }
+  }
+
+  /**
+   * Override BaseAdapter.stop so daemon shutdown also tears down in-flight
+   * claude subprocesses cleanly. Without this, killing the daemon leaves
+   * the channel's last event as a `status` (e.g. "Bash › ..." mid-tool-call)
+   * forever — the workspace UI then shows the thread as "running" until a
+   * new message arrives. Fire-and-forget; daemon._killAgent gives us up to
+   * 5s to actually finish the cleanup before the parent exits.
+   */
+  stop() {
+    this._stopAllProcesses(
+      'Task interrupted — daemon restarting. Send another message to continue.'
+    ).catch(() => {});
+    super.stop();
   }
 
   async _stopProcess(proc) {
     if (!proc || proc.exitCode !== null) return;
     try {
       if (IS_WINDOWS) {
-        try { execSync(`taskkill /F /T /PID ${proc.pid}`, { timeout: 5000 }); } catch {}
+        // Give Claude Code a Ctrl+C-like interrupt first so it can cancel
+        // shell/background tasks it manages before the forceful process-tree
+        // cleanup below. Going straight to /F can leave detached tool work
+        // alive even though the Claude CLI process itself is gone.
+        try { proc.kill('SIGINT'); } catch {}
+        const exited = await new Promise((resolve) => {
+          if (proc.exitCode !== null) {
+            resolve(true);
+            return;
+          }
+          const timeout = setTimeout(() => resolve(false), 1500);
+          proc.once('exit', () => { clearTimeout(timeout); resolve(true); });
+        });
+        if (!exited) {
+          try { execSync(`taskkill /F /T /PID ${proc.pid}`, { timeout: 5000 }); } catch {}
+        }
       } else {
         try { process.kill(-proc.pid, 'SIGTERM'); } catch {
           proc.kill('SIGTERM');
         }
         await new Promise((resolve) => {
+          let done = false;
+          const finish = () => {
+            if (done) return;
+            done = true;
+            resolve();
+          };
           const timeout = setTimeout(() => {
             try { process.kill(-proc.pid, 'SIGKILL'); } catch {
               proc.kill('SIGKILL');
             }
-            resolve();
-          }, 5000);
-          proc.on('exit', () => { clearTimeout(timeout); resolve(); });
+            const reapTimeout = setTimeout(finish, 1000);
+            proc.once('exit', () => { clearTimeout(reapTimeout); finish(); });
+          }, 1500);
+          proc.once('exit', () => { clearTimeout(timeout); finish(); });
         });
       }
     } catch {}
   }
 
-  async _stopAllProcesses() {
+  async _stopAllProcesses(completionMessage = 'Execution stopped.') {
     const entries = Object.entries(this._channelProcesses);
     if (!entries.length) return;
     this._log(`Stopping ${entries.length} running process(es)...`);
     for (const [channel, proc] of entries) {
+      this._stoppingChannels.add(channel);
       await this._stopProcess(proc);
       delete this._channelProcesses[channel];
       delete this._channelQueues[channel];
+      // Post as a chat message (not status) so the channel's last event
+      // type is non-status — the workspace UI then transitions out of
+      // "agent is working" state instead of shimmering forever.
       try {
-        await this.sendStatus(channel, 'Execution stopped by user');
+        await this.sendResponse(channel, completionMessage);
       } catch {}
     }
   }
@@ -357,6 +399,7 @@ class ClaudeAdapter extends BaseAdapter {
     if (!content) return;
 
     const msgChannel = msg.sessionId || this.channelName;
+    this._stoppingChannels.delete(msgChannel);
     const sender = msg.senderName || msg.senderType || 'user';
     this._log(`Processing message from ${sender} in ${msgChannel}: ${content.slice(0, 80)}...`);
 
@@ -391,10 +434,19 @@ class ClaudeAdapter extends BaseAdapter {
     let mcpConfigFile = null;
     let cmd;
 
-    // Clean env
+    // Clean env: strip every CLAUDE_* / AI_AGENT variable inherited from a
+    // parent Claude Code (or Claude Agent SDK) process. If we don't, the
+    // spawned `claude` thinks it's running under an SDK harness and picks
+    // an org-scoped auth path that returns 403 "Account is no longer a
+    // member of the organization" even when the user is logged in fine via
+    // `claude login`. We let the child rediscover auth from
+    // ~/.claude/.credentials.json (or ANTHROPIC_API_KEY if set).
     const cleanEnv = { ...(this.agentEnv || process.env) };
-    delete cleanEnv.CLAUDECODE;
-    delete cleanEnv.CLAUDE_CODE_SESSION;
+    for (const k of Object.keys(cleanEnv)) {
+      if (k.startsWith('CLAUDE_') || k === 'CLAUDECODE' || k === 'AI_AGENT') {
+        delete cleanEnv[k];
+      }
+    }
 
     // Run up to 2 attempts: first with session resume, then fresh if stale session detected
     let _shouldRetry = false;
@@ -549,6 +601,12 @@ class ClaudeAdapter extends BaseAdapter {
           }
 
           delete this._channelProcesses[msgChannel];
+          const stoppedByUser = this._stoppingChannels.has(msgChannel);
+          if (stoppedByUser) {
+            this._stoppingChannels.delete(msgChannel);
+            resolve(false);
+            return;
+          }
 
           if (code !== 0) {
             this._log(`CLI exited with code ${code}`);

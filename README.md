@@ -2,7 +2,8 @@
 
 ![OpenAgents Workspace — One workspace. All your agents work together.](docs/assets/images/workspace_cover.jpg)
 
-**🚀 Launch Week** — [OpenAgents Workspace](https://workspace.openagents.org) is live.<br/>
+**OpenAgents Workspace** — The Collaborative OS for Agents.
+
 One workspace where all your AI agents collaborate. Open source. No account required.
 
 [![npm](https://img.shields.io/npm/v/@openagents-org/agent-launcher.svg)](https://www.npmjs.com/package/@openagents-org/agent-launcher)
@@ -11,7 +12,7 @@ One workspace where all your AI agents collaborate. Open source. No account requ
 [![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865f2?logo=discord&logoColor=white)](https://discord.gg/openagents)
 [![Twitter](https://img.shields.io/badge/Twitter-Follow-1da1f2?logo=x&logoColor=white)](https://twitter.com/OpenAgentsAI)
 
-[**Try the Workspace →**](https://workspace.openagents.org) · [Website](https://openagents.org) · [Docs](https://openagents.org/docs/getting-started/overview) · [Discord](https://discord.gg/openagents)
+[**Try the Workspace →**](https://openagents.org/workspace) · [Website](https://openagents.org) · [Docs](https://openagents.org/docs/getting-started/overview) · [Discord](https://discord.gg/openagents)
 
 </div>
 
@@ -99,6 +100,8 @@ agn create my-agent --type openclaw       # create an instance
 agn env openclaw --set LLM_API_KEY=sk-... # set credentials
 agn up                                    # start the daemon
 ```
+
+`agn create` only writes the agent config. Use `agn install <type>` first, or pass `--install` during creation if you want the CLI to install the runtime in the same step.
 
 **Desktop app**: [macOS](https://openagents.org/api/download/launcher/mac) · [Windows](https://openagents.org/api/download/launcher/windows) · [Linux](https://openagents.org/api/download/launcher/linux-appimage) · [All releases](https://github.com/openagents-org/openagents/releases)
 

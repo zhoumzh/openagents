@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { PanelLeft, RefreshCw, Search, Star, Archive, Trash2, MoreVertical, ArchiveRestore, Wrench, Loader2, CheckCircle2, MessageCircle } from 'lucide-react';
+import { PanelLeft, Pencil, RefreshCw, Search, Star, Archive, Trash2, MoreVertical, ArchiveRestore, Wrench, Loader2, CheckCircle2, MessageCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useLayout } from '@/components/layout/layout-context';
@@ -156,7 +156,7 @@ function DMSection({
 }
 
 export function ThreadList() {
-  const { sessions, currentSessionId, setCurrentSessionId, agents, lastMessageBySession, activeSessionIds, completedSessionIds, updateSession, dmConversations } = useWorkspace();
+  const { sessions, currentSessionId, setCurrentSessionId, agents, lastMessageBySession, activeSessionIds, completedSessionIds, updateSession, renameSession, dmConversations } = useWorkspace();
   const { sidebarToggle, isMobile, openMobileDetail } = useLayout();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchHit[]>([]);
@@ -221,6 +221,48 @@ export function ThreadList() {
       )
     : activeSessions;
 
+  // Keyboard shortcuts:
+  //   1-9  → open the Nth visible thread (mirrors monitor mode's 1-6)
+  //   i    → focus the chat input of the current thread
+  //   Esc  → handled inside chat-input (blurs the textarea)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Don't hijack typing in any input/textarea, and skip when modifier
+      // keys are held (so Cmd+1 / Ctrl+R / etc. still reach the browser).
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (target?.isContentEditable) return;
+
+      // 1-9 → open thread by index (uses the same list the user is looking at).
+      // Pass skipFocus so the chat input doesn't steal focus — the user is
+      // navigating with the keyboard and presses 'i' explicitly to type.
+      const num = parseInt(e.key, 10);
+      if (num >= 1 && num <= 9) {
+        const session = activeSessions[num - 1];
+        if (session) {
+          e.preventDefault();
+          setCurrentSessionId(session.sessionId, { skipFocus: true });
+          if (isMobile) openMobileDetail();
+        }
+        return;
+      }
+
+      // i → focus the chat input (vi-style "insert"). Only fires when a
+      // thread is actually open, otherwise there's nothing to focus.
+      if (e.key === 'i' && currentSessionId) {
+        const el = document.querySelector<HTMLTextAreaElement>('textarea[data-chat-input]');
+        if (el) {
+          e.preventDefault();
+          el.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [activeSessions, currentSessionId, isMobile, setCurrentSessionId, openMobileDetail]);
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -259,12 +301,16 @@ export function ThreadList() {
       {/* Thread rows */}
       <div className="flex-1 overflow-y-auto px-4 py-1">
         <div className="space-y-1">
-          {filteredSessions.map((session) => {
+          {filteredSessions.map((session, idx) => {
             const isSelected = session.sessionId === currentSessionId;
             const lastMsg = lastMessageBySession[session.sessionId];
             const isActive = activeSessionIds.has(session.sessionId);
             const isCompleted = completedSessionIds.has(session.sessionId);
             const contentHit = hitsByChannel.get(session.sessionId);
+            // Numeric shortcut hint for the first 9 active threads. Hidden
+            // while searching because the rendered list reorders and the
+            // 1-9 handler operates on activeSessions, not search results.
+            const shortcutKey = !isSearching && idx < 9 ? idx + 1 : null;
 
             // Show last activity time from backend
             const activityMs = session.lastEventAt;
@@ -336,9 +382,7 @@ export function ThreadList() {
                 {/* Avatar stack — show only channel participants */}
                 <div className="shrink-0">
                   <AvatarStack agents={
-                    session.participants.length > 0
-                      ? agents.filter((a) => session.participants.includes(a.agentName))
-                      : agents
+                    agents.filter((a) => session.participants.includes(a.agentName))
                   } />
                 </div>
 
@@ -360,6 +404,11 @@ export function ThreadList() {
                         {displayTime}
                       </span>
                     )}
+                    {shortcutKey && (
+                      <kbd className="size-4 flex items-center justify-center rounded text-[9px] font-mono font-medium bg-muted text-muted-foreground border border-input shrink-0">
+                        {shortcutKey}
+                      </kbd>
+                    )}
                   </div>
                   <p className={cn(
                     'text-xs text-muted-foreground truncate',
@@ -380,6 +429,19 @@ export function ThreadList() {
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-44">
+                    <DropdownMenuItem
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const next = window.prompt('Rename thread', session.title || '');
+                        const trimmed = next?.trim();
+                        if (trimmed && trimmed !== session.title) {
+                          renameSession(session.sessionId, trimmed);
+                        }
+                      }}
+                    >
+                      <Pencil className="size-4" />
+                      <span>Rename</span>
+                    </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={(e) => {
                         e.stopPropagation();
@@ -433,17 +495,32 @@ export function ThreadList() {
             </div>
           )}
 
-          {/* Agent DMs section */}
-          {!isSearching && dmConversations.length > 0 && (
-            <DMSection
-              conversations={dmConversations}
-              currentSessionId={currentSessionId}
-              onSelect={(id) => {
-                setCurrentSessionId(id);
-                if (isMobile) openMobileDetail();
-              }}
-            />
-          )}
+          {/* Agent DMs section — only show DMs whose agent participant(s) are currently online */}
+          {(() => {
+            if (isSearching) return null;
+            const onlineAgentNames = new Set(
+              agents.filter((a) => a.status === 'online').map((a) => a.agentName)
+            );
+            const visibleDMs = dmConversations.filter((c) => {
+              // For each side, if it's an agent it must be online; humans pass through.
+              return c.agents.every((addr) => {
+                if (addr.startsWith('human:')) return true;
+                const name = addr.replace(/^openagents:/, '');
+                return onlineAgentNames.has(name);
+              });
+            });
+            if (visibleDMs.length === 0) return null;
+            return (
+              <DMSection
+                conversations={visibleDMs}
+                currentSessionId={currentSessionId}
+                onSelect={(id) => {
+                  setCurrentSessionId(id);
+                  if (isMobile) openMobileDetail();
+                }}
+              />
+            );
+          })()}
 
           {/* Archived section */}
           {!isSearching && archivedSessions.length > 0 && (
@@ -492,9 +569,7 @@ export function ThreadList() {
                       >
                         <div className="shrink-0 flex items-center justify-center border border-zinc-200 dark:border-zinc-700 rounded-full size-[30px] bg-white dark:bg-zinc-900">
                           <AvatarStack agents={
-                            session.participants.length > 0
-                              ? agents.filter((a) => session.participants.includes(a.agentName))
-                              : agents
+                            agents.filter((a) => session.participants.includes(a.agentName))
                           } />
                         </div>
                         <div className="flex-1 min-w-0 space-y-0.5">

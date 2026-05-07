@@ -74,28 +74,31 @@ class AgentConnector {
     const agents = this.config.getAgents();
     const networks = this.config.getNetworks();
     return agents.map((a) => {
-      const agentEnv = this.env.load(a.type);
+      const type = a.type || 'openclaw';
+      const typeEnv = this.env.load(type);
       const network = networks.find((n) => n.slug === a.network || n.id === a.network);
       return {
         name: a.name,
-        type: a.type || 'openclaw',
+        type,
         role: a.role || 'worker',
         network: a.network || null,
         networkName: network ? (network.name || network.slug) : null,
         path: a.path || null,
         resumeSessionId: a.resumeSessionId || null,
-        env: { ...agentEnv, ...(a.env || {}) },
+        env: { ...typeEnv, ...(a.env || {}) },
+        instanceEnv: { ...(a.env || {}) },
       };
     });
   }
 
-  addAgent({ name, type, role, path, resumeSessionId }) {
+  addAgent({ name, type, role, path, resumeSessionId, env }) {
     this.config.addAgent({
       name,
       type: type || 'openclaw',
       role: role || 'worker',
       path,
       resumeSessionId,
+      env,
     });
     return { success: true };
   }
@@ -111,6 +114,12 @@ class AgentConnector {
     return this.env.load(agentType);
   }
 
+  getAgentInstanceEnv(agentName) {
+    const agent = this.config.getAgent(agentName);
+    if (!agent) throw new Error(`Agent '${agentName}' not found`);
+    return { ...(agent.env || {}) };
+  }
+
   saveAgentEnv(agentType, env) {
     this.env.save(agentType, env);
     // Configure native auth for agents that need it (e.g. OpenClaw auth-profiles.json)
@@ -121,6 +130,24 @@ class AgentConnector {
         OpenClawAdapter.configureNativeAuth(saved);
       }
     } catch {}
+    return { success: true };
+  }
+
+  saveAgentInstanceEnv(agentName, env) {
+    const agent = this.config.getAgent(agentName);
+    if (!agent) throw new Error(`Agent '${agentName}' not found`);
+    const saved = this.config.updateAgentEnv(agentName, env);
+
+    // Preserve native auth side effects for agents that need them while
+    // keeping the model choice scoped to this individual agent.
+    try {
+      if ((agent.type || 'openclaw') === 'openclaw') {
+        const OpenClawAdapter = require('./adapters/openclaw');
+        const typeEnv = this.env.load(agent.type || 'openclaw');
+        OpenClawAdapter.configureNativeAuth({ ...typeEnv, ...saved });
+      }
+    } catch {}
+
     return { success: true };
   }
 
@@ -220,6 +247,14 @@ class AgentConnector {
    */
   getLogs(agentName, lines = 200) {
     return this.config.getLogs(agentName, lines);
+  }
+
+  tailLogs(opts = {}) {
+    return this.config.tailLogs(opts);
+  }
+
+  clearLogsInRange(opts = {}) {
+    return this.config.clearLogsInRange(opts);
   }
 
   // -- Workspace API --
