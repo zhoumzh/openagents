@@ -14,6 +14,7 @@ const path = require('path');
 const { execSync, spawn } = require('child_process');
 
 const BaseAdapter = require('./base');
+const { whereBinary } = require('../paths');
 const { formatAttachmentsForPrompt, SESSION_DEFAULT_RE, generateSessionTitle } = require('./utils');
 const { buildClaudeSystemPrompt } = require('./workspace-prompt');
 
@@ -110,7 +111,9 @@ class GeminiAdapter extends BaseAdapter {
     for (const c of candidates) {
       if (fs.existsSync(c)) return c;
     }
-    return 'node';
+    // Fall back to the node already running this daemon (absolute, always valid).
+    // Bare 'node' can be off-PATH in a packaged daemon or CI runner.
+    return process.execPath;
   }
 
   _resolveToNodeCmd(binPath) {
@@ -121,6 +124,13 @@ class GeminiAdapter extends BaseAdapter {
       const jsMatch = cmdContent.match(/%dp0%\\([^\s"*?]+\.m?js)/i);
       if (jsMatch) {
         return [nodeBin, path.resolve(cmdDir, jsMatch[1])];
+      }
+      // .cmd shims that forward to a native .exe — resolve to the exe and spawn
+      // it directly. Wrapping such a .cmd in `cmd.exe /c` caps the command line
+      // at cmd.exe's 8191-char limit, truncating long args (e.g. system prompts).
+      const exeMatch = cmdContent.match(/%dp0%\\([^\s"*?]+\.exe)/i);
+      if (exeMatch) {
+        return [path.resolve(cmdDir, exeMatch[1])];
       }
     } else {
       try {
@@ -144,17 +154,12 @@ class GeminiAdapter extends BaseAdapter {
     const runtimeCandidate = path.join(home, '.openagents', 'runtimes', 'gemini', 'node_modules', '.bin', `gemini${ext}`);
     if (fs.existsSync(runtimeCandidate)) return runtimeCandidate;
 
-    // Tier 1: PATH search
-    try {
-      if (IS_WINDOWS) {
-        const r = execSync('where gemini.cmd 2>nul || where gemini.exe 2>nul || where gemini 2>nul', {
-          encoding: 'utf-8', timeout: 5000,
-        });
-        return r.split(/\r?\n/)[0].trim();
-      } else {
-        return execSync('which gemini', { encoding: 'utf-8', timeout: 5000 }).trim();
-      }
-    } catch {}
+    // Tier 1: PATH search via a codepage-safe lookup (whereBinary forces UTF-8
+    // output + verifies existence so a non-ASCII/Chinese username isn't mangled
+    // into an ENOENT; it also no longer returns an empty string on a miss, which
+    // used to short-circuit the Node-derived fallback tiers below).
+    const viaWhere = whereBinary('gemini');
+    if (viaWhere) return viaWhere;
 
     // Tier 2: Next to current Node.js interpreter
     const nodeBinDir = path.dirname(process.execPath);
@@ -177,7 +182,41 @@ class GeminiAdapter extends BaseAdapter {
     return null;
   }
 
+  // The Gemini CLI refuses to run non-interactively unless an auth method is
+  // explicitly selected in ~/.gemini/settings.json ("Invalid auth method
+  // selected"), even when GEMINI_API_KEY is present. When the user configured an
+  // API key, select API-key auth (both the legacy flat and current nested
+  // schema) and disable folder-trust so `-y` isn't downgraded. We never override
+  // an existing non-api-key selection (e.g. a real OAuth sign-in).
+  _ensureGeminiAuth() {
+    if (this._geminiAuthReady) return;
+    this._geminiAuthReady = true;
+    try {
+      const env = this.agentEnv || process.env;
+      const apiKey = (env.GEMINI_API_KEY || env.GOOGLE_API_KEY || '').trim();
+      if (!apiKey) return; // OAuth / other — leave the user's setup alone.
+      const dir = path.join(os.homedir(), '.gemini');
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'settings.json');
+      let settings = {};
+      try { settings = JSON.parse(fs.readFileSync(file, 'utf-8')) || {}; } catch {}
+      const current =
+        settings.selectedAuthType ||
+        (settings.security && settings.security.auth && settings.security.auth.selectedType);
+      if (current && current !== 'gemini-api-key') return; // respect explicit OAuth/Vertex.
+      settings.selectedAuthType = 'gemini-api-key';
+      settings.security = settings.security || {};
+      settings.security.auth = { ...(settings.security.auth || {}), selectedType: 'gemini-api-key' };
+      settings.security.folderTrust = { ...(settings.security.folderTrust || {}), enabled: false };
+      fs.writeFileSync(file, JSON.stringify(settings, null, 2));
+      this._log('Configured Gemini CLI for API-key auth (~/.gemini/settings.json)');
+    } catch (e) {
+      this._log(`gemini auth setup skipped: ${e.message}`);
+    }
+  }
+
   _buildGeminiCmd(prompt, channelName, { skipResume = false } = {}) {
+    this._ensureGeminiAuth();
     const geminiBin = this._findGeminiBinary();
     if (!geminiBin) {
       throw new Error('gemini CLI not found. Install with: npm install -g @google/gemini-cli');
@@ -194,6 +233,12 @@ class GeminiAdapter extends BaseAdapter {
     const fullPrompt = `${systemPrompt}\n\n---\n\nUser message:\n${prompt}`;
 
     const cmd = [geminiBin, '-p', fullPrompt, '-y', '-o', 'stream-json'];
+
+    // Honor a user-configured model (e.g. when pointing at a relay/proxy whose
+    // channels don't match the CLI default). Set via GEMINI_MODEL in env_config.
+    const env = this.agentEnv || process.env;
+    const model = (env.GEMINI_MODEL || env.GOOGLE_GEMINI_MODEL || '').trim();
+    if (model) cmd.push('-m', model);
 
     const sessionId = this._channelSessions[channelName];
     if (sessionId && !skipResume) {
@@ -259,7 +304,7 @@ class GeminiAdapter extends BaseAdapter {
       try {
         const resolved = this._resolveToNodeCmd(cmd[0]);
         if (resolved) {
-          cmd = [resolved[0], resolved[1], ...cmd.slice(1)];
+          cmd = [...resolved, ...cmd.slice(1)];
         } else if (IS_WINDOWS && cmd[0].toLowerCase().endsWith('.cmd')) {
           cmd = ['cmd.exe', '/c', ...cmd];
         }

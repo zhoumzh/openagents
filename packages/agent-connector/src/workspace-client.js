@@ -3,7 +3,7 @@
 const https = require('https');
 const http = require('http');
 
-const DEFAULT_ENDPOINT = 'https://openagents-test.inner.chj.cloud';
+const DEFAULT_ENDPOINT = 'https://workspace-endpoint.openagents.org';
 
 /**
  * Thrown when the workspace rejects a request because our session_id has
@@ -59,7 +59,7 @@ class WorkspaceClient {
     const result = data.data || data;
 
     const frontendUrl = this.endpoint
-      .replace('openagents', 'openagents-workspaces')
+      .replace('workspace-endpoint', 'workspace')
       .replace('/v1', '');
 
     return {
@@ -133,7 +133,7 @@ class WorkspaceClient {
         agent_name: agentName,
         network: workspaceId,
       }, this._wsHeaders(token));
-    } catch { }
+    } catch {}
   }
 
   /**
@@ -192,6 +192,32 @@ class WorkspaceClient {
   }
 
   /**
+   * Fetch the most recent N messages in a channel, returned oldest-to-newest.
+   * Used by adapters to rebuild context for a fresh Claude Code session
+   * when --resume of the previous session fails (the channel's chat history
+   * is the only thing that survives a session-storage rotation).
+   */
+  async getRecentMessages(workspaceId, channelName, token, limit = 30) {
+    try {
+      const params = new URLSearchParams({
+        network: workspaceId,
+        channel: channelName,
+        type: 'workspace.message',
+        sort: 'desc',
+        limit: String(limit),
+      });
+      const data = await this._get(`/v1/events?${params}`, this._wsHeaders(token));
+      const result = data.data || data;
+      const events = (result && result.events) || [];
+      // Server returned newest-first; reverse so the caller can present them
+      // in chronological order without further fiddling.
+      return events.slice().reverse().map((e) => this._eventToMessage(e));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Fetch the latest workspace.message.posted event id (head cursor).
    * Used by adapters to skip past existing events on join in O(1) instead
    * of paginating from the start. Returns null if the workspace is empty
@@ -218,10 +244,15 @@ class WorkspaceClient {
    * Poll for pending messages targeted at an agent via GET /v1/events.
    * Returns { messages, cursor } where cursor is the last event ID.
    */
-  async pollPending(workspaceId, agentName, token, { after, limit = 50 } = {}) {
+  async pollPending(workspaceId, agentName, token, { after, limit = 500 } = {}) {
     const params = new URLSearchParams({
       network: workspaceId,
       type: 'workspace.message.posted',
+      // Server-side pre-filter: only return events routed to this agent (plus
+      // untargeted ones) instead of the whole network's traffic. Backward
+      // compatible — older backends ignore the unknown param and return
+      // everything, so the client-side filter below stays as the safety net.
+      target_agents: agentName,
       limit: String(limit),
     });
     if (after) params.set('after', after);
@@ -230,12 +261,23 @@ class WorkspaceClient {
     const result = data.data || data;
     const events = (result && result.events) || [];
 
+    // Prefer the server's next_cursor: with server-side target filtering the
+    // last returned event lags the stream tip, so advancing by it alone would
+    // re-scan the same range every poll. next_cursor jumps past other agents'
+    // events once ours are drained. Older backends don't send it — fall back
+    // to the last returned event id (they return the full stream, so that IS
+    // the tip).
     let cursor = null;
-    if (events.length > 0) {
+    if (result && result.next_cursor) {
+      cursor = result.next_cursor;
+    } else if (events.length > 0) {
       cursor = events[events.length - 1].id || null;
     }
 
-    // Filter for messages targeted at this agent.
+    // Filter for messages targeted at this agent. With a targeting-aware
+    // backend this is mostly a no-op (server already narrowed the set); it
+    // remains authoritative for older backends and for the untargeted events
+    // the server includes as a safe superset.
     //
     // target_agents semantics:
     //   • absent            → legacy server with no routing decision
@@ -267,6 +309,11 @@ class WorkspaceClient {
           // Legacy server (no target_agents): broadcast for compat
           messages.push(this._eventToMessage(e));
         }
+      } else if (source.startsWith('system:')) {
+        // System messages (timers, notifications): pick up if targeted
+        if (hasTargetList && targetAgents.includes(agentName)) {
+          messages.push(this._eventToMessage(e));
+        }
       } else if (source.startsWith('openagents:')) {
         // Agent messages: only pick up if explicitly listed
         if (hasTargetList && targetAgents.includes(agentName)) {
@@ -275,7 +322,52 @@ class WorkspaceClient {
       }
     }
 
-    return { messages, cursor };
+    const composing = !!(result && result.composing);
+    return { messages, cursor, composing };
+  }
+
+  /**
+   * Get the workspace's top-level metadata via GET /v1/workspaces/{id}.
+   *
+   * Returns the full data block from the backend — adapters care about
+   * `browserEnabled` today, but more keys may be surfaced over time. On
+   * error, returns null so callers can fall back to defaults rather than
+   * crashing.
+   */
+  async getWorkspaceMetadata(workspaceId, token) {
+    try {
+      const data = await this._get(
+        `/v1/workspaces/${workspaceId}`,
+        this._wsHeaders(token),
+      );
+      return data.data || data || {};
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Report skill-install progress/result back to the workspace.
+   *
+   * POST /v1/workspaces/{id}/members/{agentName}/skills/status
+   * Body: { skill_id, state: "installing"|"installed"|"failed"|"uninstalled",
+   *         path?, error? }
+   *
+   * The backend updates WorkspaceMember.enabled_skills.skill_status so the
+   * Skill Hub UI can render installing / installed / failed states. Best
+   * effort — returns the updated payload or throws (caller decides).
+   */
+  async reportSkillStatus(workspaceId, agentName, token, { skillId, state, path: installPath, error, partial } = {}) {
+    const body = { skill_id: skillId, state };
+    if (installPath) body.path = installPath;
+    if (error) body.error = String(error).slice(0, 2000);
+    if (partial) body.partial = true;
+    const data = await this._post(
+      `/v1/workspaces/${workspaceId}/members/${encodeURIComponent(agentName)}/skills/status`,
+      body,
+      this._wsHeaders(token),
+    );
+    return data.data || data;
   }
 
   /**
@@ -314,7 +406,7 @@ class WorkspaceClient {
         body,
         this._wsHeaders(token),
       );
-    } catch { }
+    } catch {}
   }
 
   /**
@@ -325,16 +417,17 @@ class WorkspaceClient {
       const params = new URLSearchParams({
         network: workspaceId,
         type: 'workspace.agent.control',
+        target: `openagents:${agentName}`,
         limit: '10',
+        sort: 'desc',
       });
       if (after) params.set('after', after);
       const data = await this._get(`/v1/events?${params}`, this._wsHeaders(token));
       const result = data.data || data;
       const events = (result && result.events) || [];
-      return events.filter((e) => {
-        const target = e.target || '';
-        return target === `openagents:${agentName}`;
-      });
+      // Re-sort ascending by timestamp so callers process oldest-first.
+      events.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      return events;
     } catch {
       return [];
     }
@@ -353,6 +446,7 @@ class WorkspaceClient {
       agentName: (a.address || '').replace('openagents:', ''),
       role: a.role || 'member',
       status: a.status || 'offline',
+      enabledSkills: a.enabled_skills || null,
     }));
   }
 
@@ -498,6 +592,155 @@ class WorkspaceClient {
     return data.data || data;
   }
 
+  // ── Todos & Timers ──
+
+  async putTodos(workspaceId, channelName, token, todos, { source } = {}) {
+    const body = {
+      todos,
+      network: workspaceId,
+      channel: channelName,
+      source: source || 'openagents:unknown',
+    };
+    const data = await this._put('/v1/todos', body, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  async getTodos(workspaceId, channelName, token, { agent, all } = {}) {
+    const params = new URLSearchParams({ network: workspaceId });
+    if (channelName) params.set('channel', channelName);
+    if (agent) params.set('agent', agent);
+    if (all) params.set('all', 'true');
+    const data = await this._get(`/v1/todos?${params}`, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  async createTimer(workspaceId, channelName, token, delay, message, { source } = {}) {
+    const body = {
+      delay,
+      message,
+      network: workspaceId,
+      channel: channelName,
+      source: source || 'openagents:unknown',
+    };
+    const data = await this._post('/v1/timers', body, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  async listTimers(workspaceId, channelName, token) {
+    const params = new URLSearchParams({ network: workspaceId });
+    if (channelName) params.set('channel', channelName);
+    const data = await this._get(`/v1/timers?${params}`, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  async cancelTimer(workspaceId, token, timerId, network) {
+    const params = network ? `?network=${network}` : '';
+    const data = await this._delete(`/v1/timers/${timerId}`, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  // ── Routines ──
+
+  async createRoutine(workspaceId, channelName, token, { name, message, context, hour, minute, days, interval_minutes, source } = {}) {
+    const body = {
+      name,
+      message,
+      context: context || '',
+      network: workspaceId,
+      channel: channelName,
+      source: source || 'openagents:unknown',
+    };
+    if (interval_minutes != null) {
+      body.interval_minutes = interval_minutes;
+    } else {
+      body.hour = hour;
+      body.minute = minute;
+      if (days) body.days = days;
+    }
+    const data = await this._post('/v1/routines', body, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  async listRoutines(workspaceId, channelName, token) {
+    const params = new URLSearchParams({ network: workspaceId });
+    if (channelName) params.set('channel', channelName);
+    const data = await this._get(`/v1/routines?${params}`, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  async cancelRoutine(workspaceId, token, routineId) {
+    const data = await this._delete(`/v1/routines/${routineId}`, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  // ── Notifications ──
+
+  async createNotification(workspaceId, token, { title, message, priority, channel, source } = {}) {
+    const body = {
+      title,
+      message,
+      priority: priority || 'normal',
+      network: workspaceId,
+      source: source || 'openagents:unknown',
+    };
+    if (channel) body.channel = channel;
+    const data = await this._post('/v1/notifications', body, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  async listNotifications(workspaceId, token, { limit = 50 } = {}) {
+    const params = new URLSearchParams({
+      network: workspaceId,
+      limit: String(limit),
+    });
+    const data = await this._get(`/v1/notifications?${params}`, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  // ── Knowledge Base ──
+
+  async listKnowledge(workspaceId, token, { limit = 100 } = {}) {
+    const params = new URLSearchParams({
+      network: workspaceId,
+      limit: String(limit),
+    });
+    const data = await this._get(`/v1/knowledge?${params}`, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  async getKnowledge(workspaceId, token, entryId) {
+    const params = new URLSearchParams({ network: workspaceId });
+    const data = await this._get(`/v1/knowledge/${entryId}?${params}`, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  async getKnowledgeBySlug(workspaceId, token, slug) {
+    const params = new URLSearchParams({ network: workspaceId });
+    const data = await this._get(`/v1/knowledge/by-slug/${slug}?${params}`, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  async createKnowledge(workspaceId, token, { title, content, description, source } = {}) {
+    const body = { title, content, network: workspaceId, source: source || 'openagents:unknown' };
+    if (description) body.description = description;
+    const data = await this._post('/v1/knowledge', body, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  async updateKnowledge(workspaceId, token, entryId, { title, content, description, source } = {}) {
+    const body = { network: workspaceId, source: source || 'openagents:unknown' };
+    if (title !== undefined) body.title = title;
+    if (content !== undefined) body.content = content;
+    if (description !== undefined) body.description = description;
+    const data = await this._put(`/v1/knowledge/${entryId}`, body, this._wsHeaders(token));
+    return data.data || data;
+  }
+
+  async deleteKnowledge(workspaceId, token, entryId) {
+    const data = await this._delete(`/v1/knowledge/${entryId}`, this._wsHeaders(token), workspaceId);
+    return data.data || data;
+  }
+
   // ── Internal helpers ──
 
   /**
@@ -548,6 +791,14 @@ class WorkspaceClient {
         method: 'GET',
         headers,
         timeout,
+        // Hard end-to-end deadline. The `timeout` option above is only a SOCKET
+        // inactivity timeout — it is NOT armed until a socket exists, so it does
+        // not bound DNS resolution or TCP connect. During a network partition a
+        // request stuck in getaddrinfo/connect never fires 'timeout', so the
+        // await never settles and the caller's single poll loop wedges forever
+        // (the agent stays "online" via its separate heartbeat but stops
+        // consuming messages). AbortSignal.timeout fires in ANY phase.
+        signal: AbortSignal.timeout(timeout),
       }, (res) => {
         let data = '';
         res.on('data', (chunk) => { data += chunk; });
@@ -582,6 +833,7 @@ class WorkspaceClient {
         method: 'GET',
         headers,
         timeout,
+        signal: AbortSignal.timeout(timeout), // hard deadline (covers DNS/connect); see _get
       }, (res) => {
         const chunks = [];
         res.on('data', (chunk) => { chunks.push(chunk); });
@@ -614,6 +866,50 @@ class WorkspaceClient {
         method: 'POST',
         headers: { ...headers, 'Content-Length': Buffer.byteLength(jsonBody) },
         timeout,
+        signal: AbortSignal.timeout(timeout), // hard deadline (covers DNS/connect); see _get
+      }, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            if (res.statusCode >= 400) {
+              const msg = parsed.message || `HTTP ${res.statusCode}`;
+              if (typeof msg === 'string' && msg.toLowerCase().includes('session_revoked')) {
+                reject(new SessionRevokedError(msg));
+              } else {
+                reject(new Error(msg));
+              }
+            } else {
+              resolve(parsed);
+            }
+          } catch {
+            reject(new Error(`Invalid response: ${data.slice(0, 200)}`));
+          }
+        });
+      });
+
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
+      req.write(jsonBody);
+      req.end();
+    });
+  }
+
+  _put(urlPath, body, headers = {}, timeout = 30000) {
+    if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+    const jsonBody = JSON.stringify(body);
+    const fullUrl = this.endpoint + urlPath;
+
+    return new Promise((resolve, reject) => {
+      const parsedUrl = new URL(fullUrl);
+      const transport = parsedUrl.protocol === 'https:' ? https : http;
+
+      const req = transport.request(fullUrl, {
+        method: 'PUT',
+        headers: { ...headers, 'Content-Length': Buffer.byteLength(jsonBody) },
+        timeout,
+        signal: AbortSignal.timeout(timeout), // hard deadline (covers DNS/connect); see _get
       }, (res) => {
         let data = '';
         res.on('data', (chunk) => { data += chunk; });
@@ -656,6 +952,7 @@ class WorkspaceClient {
         method: 'PATCH',
         headers: { ...headers, 'Content-Length': Buffer.byteLength(jsonBody) },
         timeout,
+        signal: AbortSignal.timeout(timeout), // hard deadline (covers DNS/connect); see _get
       }, (res) => {
         let data = '';
         res.on('data', (chunk) => { data += chunk; });
@@ -691,6 +988,7 @@ class WorkspaceClient {
         method: 'DELETE',
         headers,
         timeout: 15000,
+        signal: AbortSignal.timeout(15000), // hard deadline (covers DNS/connect); see _get
       }, (res) => {
         let data = '';
         res.on('data', (chunk) => { data += chunk; });

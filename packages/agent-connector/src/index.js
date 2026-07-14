@@ -6,6 +6,7 @@ const { Registry } = require('./registry');
 const { Installer } = require('./installer');
 const { Daemon } = require('./daemon');
 const { WorkspaceClient } = require('./workspace-client');
+const { GitHubClient } = require('./github-client');
 
 /**
  * Main entry point for the agent-connector library.
@@ -84,22 +85,14 @@ class AgentConnector {
         network: a.network || null,
         networkName: network ? (network.name || network.slug) : null,
         path: a.path || null,
-        resumeSessionId: a.resumeSessionId || null,
         env: { ...typeEnv, ...(a.env || {}) },
         instanceEnv: { ...(a.env || {}) },
       };
     });
   }
 
-  addAgent({ name, type, role, path, resumeSessionId, env }) {
-    this.config.addAgent({
-      name,
-      type: type || 'openclaw',
-      role: role || 'worker',
-      path,
-      resumeSessionId,
-      env,
-    });
+  addAgent({ name, type, role, path, env }) {
+    this.config.addAgent({ name, type: type || 'openclaw', role: role || 'worker', path, env });
     return { success: true };
   }
 
@@ -130,6 +123,17 @@ class AgentConnector {
         OpenClawAdapter.configureNativeAuth(saved);
       }
     } catch {}
+    return { success: true };
+  }
+
+  /**
+   * Delete the entire type-level env file (~/.openagents/env/<type>.env).
+   * Used by the launcher's "wipe saved credentials" path on uninstall so
+   * sensitive values (API keys) don't survive a reinstall as surprise
+   * pre-filled defaults in the setup wizard.
+   */
+  deleteAgentEnv(agentType) {
+    this.env.delete(agentType);
     return { success: true };
   }
 
@@ -282,4 +286,4 @@ class AgentConnector {
 const adapters = require('./adapters');
 
 const paths = require('./paths');
-module.exports = { AgentConnector, Daemon, WorkspaceClient, adapters, paths };
+module.exports = { AgentConnector, Daemon, WorkspaceClient, GitHubClient, adapters, paths };

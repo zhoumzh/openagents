@@ -9,11 +9,58 @@
       "pair-programming",
       "open-source"
     ],
+    "builtin": true,
+    "support": { "install": true, "workspace": true, "collaboration": true },
     "install": {
       "binary": "aider",
       "macos": "curl -LsSf https://aider.chat/install.sh | sh",
       "linux": "curl -LsSf https://aider.chat/install.sh | sh",
-      "windows": "powershell -c \\\"irm https://aider.chat/install.ps1 | iex\\\""
+      "windows": "irm https://aider.chat/install.ps1 | iex"
+    },
+    "adapter": {
+      "module": "openagents.adapters.aider",
+      "class": "AiderAdapter"
+    },
+    "launch": {
+      "args": []
+    },
+    "env_config": [
+      {
+        "name": "AIDER_PROVIDER",
+        "description": "Which provider the API key belongs to. One of: auto, openai, anthropic, openrouter, gemini, deepseek, openai-compatible. `auto` infers from the model name; set it explicitly when the model name doesn't identify the provider.",
+        "required": false,
+        "default": "auto",
+        "placeholder": "auto"
+      },
+      {
+        "name": "AIDER_MODEL",
+        "description": "Model to use, e.g. sonnet, gpt-4o, claude-3-5-sonnet-20241022, openrouter/anthropic/claude-3.5-sonnet, gemini/gemini-1.5-pro, deepseek/deepseek-chat. May be left blank to let Aider auto-select — but if you set LLM_API_KEY, the provider must be determinable (via AIDER_PROVIDER or the model name).",
+        "required": false,
+        "placeholder": "gpt-4o"
+      },
+      {
+        "name": "LLM_API_KEY",
+        "description": "API key for the selected provider. Injected into the provider env var chosen by AIDER_PROVIDER/model. Leave blank to reuse a provider key already in your shell or the project's .env / .aider.conf.yml.",
+        "required": false,
+        "password": true
+      },
+      {
+        "name": "LLM_BASE_URL",
+        "description": "Endpoint URL — ONLY for AIDER_PROVIDER=openai-compatible (self-hosted / relay / local). Becomes OPENAI_API_BASE; leave blank for hosted providers.",
+        "required": false,
+        "placeholder": "https://my-endpoint.example/v1"
+      }
+    ],
+    "check_ready": {
+      "env_vars": [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+        "GEMINI_API_KEY",
+        "DEEPSEEK_API_KEY"
+      ],
+      "saved_env_key": "LLM_API_KEY",
+      "not_ready_message": "No model API key — set a model + LLM_API_KEY (or a provider key such as OPENAI_API_KEY) — press e to configure"
     }
   },
   {
@@ -27,11 +74,37 @@
       "cli",
       "vscode"
     ],
+    "builtin": true,
+    "support": { "install": true, "workspace": true, "collaboration": true },
     "install": {
       "binary": "amp",
       "macos": "curl -fsSL https://ampcode.com/install.sh | bash",
       "linux": "curl -fsSL https://ampcode.com/install.sh | bash",
-      "windows": "powershell -c \\\"irm https://ampcode.com/install.ps1 | iex\\\""
+      "windows": "irm https://ampcode.com/install.ps1 | iex"
+    },
+    "adapter": {
+      "module": "openagents.adapters.amp",
+      "class": "AmpAdapter"
+    },
+    "launch": {
+      "args": []
+    },
+    "env_config": [
+      {
+        "name": "AMP_API_KEY",
+        "description": "Amp API key (create one at https://ampcode.com/settings) — leave blank if you have run `amp login`",
+        "required": false,
+        "password": true
+      },
+      {
+        "name": "AMP_URL",
+        "description": "Amp server URL for enterprise/self-hosted deployments (leave blank for the default)",
+        "required": false
+      }
+    ],
+    "check_ready": {
+      "login_command": "amp login",
+      "not_ready_message": "Amp is installed but not signed in — run: amp login or set AMP_API_KEY"
     }
   },
   {
@@ -84,20 +157,64 @@
   {
     "name": "cline",
     "label": "Cline",
-    "description": "Autonomous coding agent (VS Code extension)",
+    "description": "Autonomous coding agent CLI by Cline Bot",
     "homepage": "https://github.com/cline/cline",
     "tags": [
       "coding",
-      "vscode",
+      "cli",
       "autonomous"
     ],
+    "builtin": true,
+    "support": { "install": true, "workspace": true, "collaboration": false },
     "install": {
-      "binary": "code",
-      "verify": "code --list-extensions 2>/dev/null | grep -qi claude-dev",
-      "verify_win": "code --list-extensions 2>nul | findstr /i claude-dev",
-      "macos": "code --install-extension saoudrizwan.claude-dev",
-      "linux": "code --install-extension saoudrizwan.claude-dev",
-      "windows": "code --install-extension saoudrizwan.claude-dev"
+      "binary": "cline",
+      "requires": [
+        "nodejs"
+      ],
+      "verify": "cline --version",
+      "verify_win": "cline --version",
+      "macos": "npm install -g cline",
+      "linux": "npm install -g cline",
+      "windows": "npm install -g cline"
+    },
+    "adapter": {
+      "module": "openagents.adapters.cline",
+      "class": "ClineAdapter"
+    },
+    "launch": {
+      "args": []
+    },
+    "env_config": [
+      {
+        "name": "CLINE_API_KEY",
+        "description": "API key for the selected provider (passed to Cline with -k). Leave blank to use `cline auth` (account or provider sign-in).",
+        "required": false,
+        "password": true
+      },
+      {
+        "name": "CLINE_PROVIDER",
+        "description": "Cline provider id (e.g. cline, anthropic, openai, openrouter). Leave blank to use Cline's configured default.",
+        "required": false,
+        "placeholder": "openrouter"
+      },
+      {
+        "name": "CLINE_MODEL",
+        "description": "Model id for the selected provider.",
+        "required": false,
+        "placeholder": "anthropic/claude-sonnet-4.6"
+      }
+    ],
+    "check_ready": {
+      "min_version": "3.0.0",
+      "env_vars": [
+        "CLINE_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY"
+      ],
+      "saved_env_key": "CLINE_API_KEY",
+      "login_command": "cline auth",
+      "not_ready_message": "Not configured — set an API key (press e) or run: cline auth"
     }
   },
   {
@@ -135,13 +252,13 @@
     "env_config": [
       {
         "name": "OPENAI_API_KEY",
-        "description": "OpenAI API key",
+        "description": "OpenAI API key (optional if using Codex subscription via 'codex login')",
         "required": false,
         "password": true
       },
       {
         "name": "OPENAI_BASE_URL",
-        "description": "OpenAI-compatible base URL",
+        "description": "OpenAI-compatible base URL (optional if using Codex subscription)",
         "required": false
       }
     ],
@@ -156,6 +273,7 @@
       ],
       "status_command": "codex login status",
       "login_command": "codex login",
+      "unverifiable": true,
       "not_ready_message": "Not configured. Set OPENAI_API_KEY + OPENAI_BASE_URL, or run: codex login"
     },
     "resolve_env": {
@@ -178,20 +296,59 @@
   {
     "name": "copilot",
     "label": "GitHub Copilot CLI",
-    "description": "GitHub Copilot coding agent for the terminal",
-    "homepage": "https://github.com/features/copilot",
+    "description": "GitHub's official Copilot coding agent for the terminal (the `copilot` CLI, not the retired `gh copilot` extension)",
+    "homepage": "https://github.com/github/copilot-cli",
     "tags": [
       "coding",
       "github",
       "cli"
     ],
+    "order": 9,
+    "support": { "install": true, "workspace": true, "collaboration": false },
+    "builtin": true,
     "install": {
-      "binary": "gh",
-      "verify": "gh copilot --version >/dev/null 2>&1",
-      "verify_win": "gh copilot --version >nul 2>nul",
-      "macos": "gh extension install github/gh-copilot",
-      "linux": "gh extension install github/gh-copilot",
-      "windows": "gh extension install github/gh-copilot"
+      "binary": "copilot",
+      "npm_package": "@github/copilot",
+      "requires": [
+        "nodejs"
+      ],
+      "min_version": "1.0.0",
+      "verify": "copilot --version >/dev/null 2>&1",
+      "verify_win": "copilot --version >nul 2>nul",
+      "macos": "npm install -g @github/copilot",
+      "linux": "npm install -g @github/copilot",
+      "windows": "npm install -g @github/copilot"
+    },
+    "adapter": {
+      "module": "openagents.adapters.copilot",
+      "class": "CopilotAdapter"
+    },
+    "launch": {
+      "args": []
+    },
+    "env_config": [
+      {
+        "name": "COPILOT_GITHUB_TOKEN",
+        "description": "GitHub token with Copilot access (optional — you can also sign in by running `copilot`, or rely on GH_TOKEN / GITHUB_TOKEN / gh auth)",
+        "required": false,
+        "password": true
+      },
+      {
+        "name": "COPILOT_MODEL",
+        "description": "Model to use (optional; leave blank for the account default)",
+        "required": false
+      }
+    ],
+    "check_ready": {
+      "env_vars": [
+        "COPILOT_GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN"
+      ],
+      "saved_env_key": "COPILOT_GITHUB_TOKEN",
+      "login_command": "copilot",
+      "unverifiable": true,
+      "not_ready_message": "Sign-in not confirmed. A token env var (COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN) is one option; you may already be signed in via `copilot` /login or `gh auth`. Auth is confirmed when you run a task."
     }
   },
   {
@@ -209,49 +366,46 @@
     "order": 4,
     "builtin": true,
     "install": {
-      "binary": "cursor",
-      "verify": "cursor --version 2>/dev/null | grep -qi cursor",
-      "verify_win": "cursor --version 2>nul | findstr /i cursor",
-      "requires": [
-        null
+      "binary": "cursor-agent",
+      "binary_aliases": [
+        "agent"
       ],
+      "verify": "cursor-agent --version 2>/dev/null | head -1",
+      "verify_win": "cursor-agent --version 2>nul",
+      "requires": [],
       "macos": "curl https://cursor.com/install -fsSL | bash",
       "linux": "curl https://cursor.com/install -fsSL | bash",
-      "windows": "echo 'Download Cursor from https://cursor.com/downloads'"
+      "windows": "\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-RestMethod -UseBasicParsing 'https://cursor.com/install?win32=true' | Invoke-Expression\""
     },
     "adapter": {
       "module": "openagents.adapters.cursor",
       "class": "CursorAdapter"
     },
     "launch": {
-      "args": [
-        null
-      ]
+      "args": []
     },
     "env_config": [
       {
-        "name": "OPENAI_API_KEY",
-        "description": "API key for LLM inference",
-        "required": true,
+        "name": "CURSOR_API_KEY",
+        "description": "Cursor API key for CLI authentication",
+        "required": false,
         "password": true
+      },
+      {
+        "name": "CURSOR_MODEL",
+        "description": "Model to use (e.g. claude-sonnet-4-6, gpt-4o)",
+        "required": false
       }
     ],
     "check_ready": {
-      "env_vars": [
-        "OPENAI_API_KEY"
-      ],
-      "saved_env_key": "OPENAI_API_KEY",
-      "not_ready_message": "No API key \u2014 press e to configure"
+      "binary": "agent",
+      "not_ready_message": "Cursor CLI not found \u2014 install with: curl https://cursor.com/install -fsSL | bash"
     },
     "resolve_env": {
       "rules": [
         {
           "from": "LLM_API_KEY",
-          "to": "OPENAI_API_KEY"
-        },
-        {
-          "from": "LLM_BASE_URL",
-          "to": "OPENAI_BASE_URL"
+          "to": "CURSOR_API_KEY"
         },
         {
           "from": "LLM_MODEL",
@@ -296,55 +450,115 @@
       ]
     },
     "check_ready": {
-      "not_ready_message": "Not logged in. Run: gemini",
+      "creds_file": "~/.gemini/oauth_creds.json",
+      "creds_no_parse": true,
+      "creds_path_env": [
+        "GOOGLE_APPLICATION_CREDENTIALS"
+      ],
+      "env_vars": [
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY"
+      ],
+      "saved_env_key": "GEMINI_API_KEY",
       "login_command": "gemini",
-      "alt_check": "gemini --version"
+      "not_ready_message": "Needs sign-in — run `gemini` to sign in, or set GEMINI_API_KEY.",
+      "unreadable_message": "Gemini credentials were found but could not be read. Check permissions on ~/.gemini, or run `gemini` to sign in again.",
+      "auth_detected_labels": {
+        "cli_login": "Google account sign-in detected",
+        "api_key": "API key detected"
+      }
     },
     "env_config": []
   },
   {
     "name": "goose",
     "label": "Goose",
-    "description": "An open-source AI developer agent by Block",
+    "description": "An open-source AI developer agent by Block (CLI — Beta)",
     "homepage": "https://github.com/block/goose",
     "tags": [
       "coding",
       "developer",
-      "open-source"
+      "open-source",
+      "cli"
     ],
+    "order": 9,
+    "support": {
+      "install": true,
+      "workspace": true,
+      "collaboration": true
+    },
+    "builtin": true,
     "install": {
       "binary": "goose",
-      "macos": "curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash",
-      "linux": "curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash",
-      "windows": "powershell -c \\\"irm https://raw.githubusercontent.com/block/goose/main/download_cli.ps1 | iex\\\""
+      "macos": "curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | CONFIGURE=false bash",
+      "linux": "curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | CONFIGURE=false bash",
+      "windows": "powershell -c \"$env:CONFIGURE='false'; irm https://raw.githubusercontent.com/block/goose/main/download_cli.ps1 | iex\""
+    },
+    "adapter": {
+      "module": "openagents.adapters.goose",
+      "class": "GooseAdapter"
+    },
+    "launch": {
+      "args": []
+    },
+    "env_config": [
+      {
+        "name": "GOOSE_PROVIDER",
+        "description": "Goose provider id (e.g. openai, anthropic, google, openrouter, ollama). Leave blank to reuse your existing Goose config.",
+        "required": false
+      },
+      {
+        "name": "GOOSE_MODEL",
+        "description": "Model name for the selected provider (e.g. gpt-4o, claude-sonnet-4-6). Leave blank to reuse your existing Goose config.",
+        "required": false
+      },
+      {
+        "name": "GOOSE_PROVIDER__API_KEY",
+        "description": "Provider API key (generic Goose provider key). Leave blank to reuse the Goose keyring/config, an OAuth provider, or a local provider.",
+        "required": false,
+        "password": true
+      },
+      {
+        "name": "GOOSE_PROVIDER__HOST",
+        "description": "Custom provider endpoint/host URL (optional — for proxies or self-hosted/OpenAI-compatible endpoints).",
+        "required": false
+      },
+      {
+        "name": "GOOSE_MODE",
+        "description": "Headless tool-permission mode. 'auto' runs tools without approval (required for the workspace); 'chat' disables tools. Approval modes are coerced to 'auto'.",
+        "required": false,
+        "default": "auto"
+      }
+    ],
+    "check_ready": {
+      "require_binary": true,
+      "not_ready_message": "Goose CLI not found. Install it: openagents install goose — then set a provider/model (or run `goose configure` once)."
     }
   },
   {
     "name": "nanoclaw",
     "label": "NanoClaw",
-    "description": "Lightweight containerized coding agent built on Claude Agent SDK",
-    "homepage": "https://github.com/qwibitai/nanoclaw",
+    "description": "Containerized agent runtime \u2014 each Agent Group runs in its own Docker container (Claude Agent SDK). Bridged to the Workspace via a native OpenAgents channel.",
+    "homepage": "https://github.com/nanocoai/nanoclaw",
     "tags": [
       "coding",
       "container",
-      "lightweight",
+      "docker",
+      "runtime",
       "open-source"
     ],
     "builtin": true,
+    "support": { "install": true, "workspace": true, "collaboration": false },
     "install": {
-      "binary": "nanoclaw",
-      "api_only": true,
+      "binary": "ncl",
       "requires": [
         "nodejs",
+        "docker",
         "git"
       ],
-      "macos": "echo 'NanoClaw uses direct API mode \u2014 no binary install needed'",
-      "linux": "echo 'NanoClaw uses direct API mode \u2014 no binary install needed'",
-      "windows": "echo 'NanoClaw uses direct API mode \u2014 no binary install needed'"
-    },
-    "adapter": {
-      "module": "openagents.adapters.nanoclaw",
-      "class": "NanoClawAdapter"
+      "macos": "echo 'NanoClaw is an external containerized runtime. Set it up from https://github.com/nanocoai/nanoclaw (clone, pnpm install, ./nanoclaw.sh setup), symlink bin/ncl onto your PATH, then install the OpenAgents channel: see docs/nanoclaw.md (/add-openagents).'",
+      "linux": "echo 'NanoClaw is an external containerized runtime. Set it up from https://github.com/nanocoai/nanoclaw (clone, pnpm install, ./nanoclaw.sh setup), symlink bin/ncl onto your PATH, then install the OpenAgents channel: see docs/nanoclaw.md (/add-openagents).'",
+      "windows": "echo 'NanoClaw requires Docker Desktop + WSL2 on Windows. Set it up inside WSL2 from https://github.com/nanocoai/nanoclaw, symlink bin/ncl onto your PATH, then install the OpenAgents channel: see docs/nanoclaw.md (/add-openagents).'"
     },
     "launch": {
       "args": [
@@ -353,34 +567,24 @@
     },
     "env_config": [
       {
-        "name": "OPENAI_API_KEY",
-        "description": "API key for LLM inference",
+        "name": "NANOCLAW_HOME",
+        "description": "Path to your NanoClaw checkout (optional if `ncl` is on PATH)",
+        "required": false,
+        "password": false
+      },
+      {
+        "name": "NANOCLAW_AGENT_GROUP",
+        "description": "NanoClaw Agent Group id or name to bridge to this agent",
         "required": true,
-        "password": true
+        "password": false
       }
     ],
     "check_ready": {
       "env_vars": [
-        "OPENAI_API_KEY"
+        "NANOCLAW_AGENT_GROUP"
       ],
-      "saved_env_key": "OPENAI_API_KEY",
-      "not_ready_message": "No API key \u2014 press e to configure"
-    },
-    "resolve_env": {
-      "rules": [
-        {
-          "from": "LLM_API_KEY",
-          "to": "OPENAI_API_KEY"
-        },
-        {
-          "from": "LLM_BASE_URL",
-          "to": "OPENAI_BASE_URL"
-        },
-        {
-          "from": "LLM_MODEL",
-          "to": "NANOCLAW_MODEL"
-        }
-      ]
+      "saved_env_key": "NANOCLAW_AGENT_GROUP",
+      "not_ready_message": "Set NANOCLAW_AGENT_GROUP (and NANOCLAW_HOME) \u2014 press e to configure"
     }
   },
   {
@@ -486,9 +690,9 @@
       "requires": [
         "nodejs"
       ],
-      "macos": "npm install -g opencode-ai@latest",
-      "linux": "npm install -g opencode-ai@latest",
-      "windows": "npm install -g opencode-ai@latest"
+      "macos": "npm install -g opencode-ai@1.17.11",
+      "linux": "npm install -g opencode-ai@1.17.11",
+      "windows": "npm install -g opencode-ai@1.17.11"
     },
     "adapter": {
       "module": "openagents.adapters.opencode",
@@ -510,8 +714,8 @@
       },
       {
         "name": "LLM_MODEL",
-        "description": "Model name",
-        "required": false,
+        "description": "Model name (required — OpenCode hangs without one)",
+        "required": true,
         "placeholder": "gpt-4o, claude-sonnet-4-20250514, etc."
       }
     ],
@@ -537,24 +741,67 @@
         "ANTHROPIC_API_KEY"
       ],
       "saved_env_key": "LLM_API_KEY",
+      "min_version": "1.17.0",
       "not_ready_message": "Not configured \u2014 press e to configure"
     }
   },
   {
-    "name": "swebench",
-    "label": "SWE-bench Agent",
-    "description": "Language model agent for software engineering tasks",
-    "homepage": "https://swe-agent.com",
+    "name": "kimi",
+    "label": "Kimi",
+    "description": "Kimi agent powered by Moonshot AI, OpenAI-compatible API.",
+    "homepage": "https://platform.moonshot.ai",
     "tags": [
       "coding",
-      "benchmarks",
-      "research"
+      "moonshot",
+      "open-source"
     ],
+    "featured": true,
+    "order": 7,
+    "support": { "install": true, "workspace": true, "collaboration": true },
+    "builtin": true,
     "install": {
-      "binary": "sweagent",
-      "macos": "pip install sweagent",
-      "linux": "pip install sweagent",
-      "windows": "pip install sweagent"
+      "binary": "kimi",
+      "api_only": true,
+      "macos": "echo 'Kimi uses direct API mode — no binary install needed'",
+      "linux": "echo 'Kimi uses direct API mode — no binary install needed'",
+      "windows": "echo 'Kimi uses direct API mode — no binary install needed'"
+    },
+    "adapter": {
+      "module": "openagents.adapters.kimi",
+      "class": "KimiAdapter"
+    },
+    "launch": {
+      "args": []
+    },
+    "env_config": [
+      {
+        "name": "KIMI_API_KEY",
+        "description": "Moonshot/Kimi API key (also accepts MOONSHOT_API_KEY env var)",
+        "required": true,
+        "password": true
+      },
+      {
+        "name": "KIMI_BASE_URL",
+        "description": "Kimi API base URL (OpenAI-compatible endpoint)",
+        "required": false,
+        "default": "https://api.moonshot.ai/v1",
+        "placeholder": "https://api.moonshot.ai/v1"
+      },
+      {
+        "name": "KIMI_MODEL",
+        "description": "Kimi model name",
+        "required": false,
+        "default": "kimi-k2.6",
+        "placeholder": "kimi-k2.6"
+      }
+    ],
+    "check_ready": {
+      "env_vars": [
+        "KIMI_API_KEY",
+        "MOONSHOT_API_KEY"
+      ],
+      "saved_env_key": "KIMI_API_KEY",
+      "not_ready_message": "No API key — press e to configure"
     }
   },
   {
@@ -577,7 +824,7 @@
       "requires": ["python3"],
       "macos": "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup",
       "linux": "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup",
-      "windows": "echo 'Hermes requires WSL2 on Windows — see https://github.com/NousResearch/hermes-agent'"
+      "windows": "\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-RestMethod -UseBasicParsing 'https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1' | Invoke-Expression\""
     },
     "launch": {
       "args": []
@@ -587,6 +834,101 @@
       "status_command": "hermes status",
       "login_command": "hermes setup",
       "not_ready_message": "Hermes not configured — run: hermes setup"
+    }
+  },
+  {
+    "name": "mini-swe-agent",
+    "label": "mini-SWE-agent",
+    "description": "A minimal shell-based coding agent for fixing issues and modifying code in a workspace.",
+    "homepage": "https://mini-swe-agent.com",
+    "tags": [
+      "coding",
+      "cli",
+      "shell",
+      "autonomous"
+    ],
+    "builtin": true,
+    "support": {
+      "install": true,
+      "workspace": true,
+      "collaboration": true
+    },
+    "install": {
+      "binary": "mini",
+      "verify": "mini --help",
+      "verify_win": "mini --help",
+      "macos": "pip install mini-swe-agent",
+      "linux": "pip install mini-swe-agent",
+      "windows": "pip install mini-swe-agent"
+    },
+    "launch": {
+      "args": []
+    },
+    "env_config": [
+      {
+        "name": "MSWEA_MODEL_NAME",
+        "description": "Model to use (routed through LiteLLM), e.g. anthropic/claude-sonnet-4-5 or gpt-4o. Optional when a model is already configured via a config file or `mini-extra config setup`. Passed as --model.",
+        "required": false,
+        "placeholder": "anthropic/claude-sonnet-4-5"
+      },
+      {
+        "name": "MSWEA_MINI_CONFIG_PATH",
+        "description": "Path to a FULL mini config file (YAML). Optional. This REPLACES mini's built-in default config (agent prompt templates, step/environment settings) — it does not merge — so provide a complete file (a good starting point is the output of `mini-extra config setup`). Leave blank to use mini's default config.",
+        "required": false,
+        "placeholder": "/path/to/mini.yaml"
+      },
+      {
+        "name": "MSWEA_COST_LIMIT",
+        "description": "Optional per-run cost limit in USD, passed as --cost-limit. Leave blank for mini's default.",
+        "required": false,
+        "placeholder": "3.0"
+      },
+      {
+        "name": "ANTHROPIC_API_KEY",
+        "description": "Anthropic API key — used when the model is an Anthropic model. Leave blank if using another provider or a key already in your environment.",
+        "required": false,
+        "password": true
+      },
+      {
+        "name": "ANTHROPIC_BASE_URL",
+        "description": "Custom endpoint for native `anthropic/…` models (an enterprise gateway or Anthropic-protocol relay). Leave blank for hosted Anthropic. Note: most third-party relays are OpenAI-compatible — for those use an `openai/…` model + OPENAI_BASE_URL instead.",
+        "required": false,
+        "placeholder": "https://your-anthropic-gateway.example"
+      },
+      {
+        "name": "OPENAI_API_KEY",
+        "description": "OpenAI API key — used when the model is an OpenAI model. Leave blank if using another provider or a key already in your environment.",
+        "required": false,
+        "password": true
+      },
+      {
+        "name": "OPENAI_BASE_URL",
+        "description": "Custom endpoint for OpenAI-compatible models (a relay/proxy or self-hosted gateway) — applies only to `openai/…` models. Leave blank for hosted OpenAI, or for native providers like `deepseek/…` / `anthropic/…`.",
+        "required": false,
+        "placeholder": "https://your-relay.example/v1"
+      },
+      {
+        "name": "DEEPSEEK_API_KEY",
+        "description": "DeepSeek API key — used when the model is a `deepseek/…` model (e.g. deepseek/deepseek-chat or deepseek/deepseek-reasoner). Connects directly to api.deepseek.com; no base URL needed.",
+        "required": false,
+        "password": true
+      },
+      {
+        "name": "DEEPSEEK_API_BASE",
+        "description": "Custom endpoint for native `deepseek/…` models. Leave blank to use DeepSeek's default (api.deepseek.com).",
+        "required": false,
+        "placeholder": "https://api.deepseek.com"
+      }
+    ],
+    "check_ready": {
+      "env_vars": [
+        "MSWEA_MODEL_NAME",
+        "MSWEA_MINI_CONFIG_PATH",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "DEEPSEEK_API_KEY"
+      ],
+      "not_ready_message": "mini-SWE-agent CLI detected. Configure a model through environment variables (MSWEA_MODEL_NAME + a provider key), a full config file (MSWEA_MINI_CONFIG_PATH), or the Model field before running a task."
     }
   }
 ]

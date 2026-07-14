@@ -21,7 +21,7 @@ from typing import List, Optional
 from sqlalchemy import select
 
 from openagents.core.onm_events import Event, WorkspaceEventTypes
-from openagents.core.onm_mods import PipelineContext, TransformMod
+from openagents.core.onm_mods import EventRejected, PipelineContext, TransformMod
 
 logger = logging.getLogger(__name__)
 
@@ -279,7 +279,7 @@ async def _handle_ping(event: Event, ctx: PipelineContext) -> Optional[Event]:
 
 async def _handle_channel_create(event: Event, ctx: PipelineContext) -> Optional[Event]:
     """network.channel.create → create Channel + initial ChannelMember rows."""
-    from app.models import Channel, ChannelMember
+    from app.models import Channel, ChannelMember, ChannelHumanMember, WorkspaceCollaborator
 
     db = ctx.extra["db"]
     workspace = ctx.extra["workspace"]
@@ -297,10 +297,45 @@ async def _handle_channel_create(event: Event, ctx: PipelineContext) -> Optional
     db.add(channel)
     db.flush()  # get channel.id
 
-    # Add initial participants
+    # Add initial agent participants (filter out routing sentinels)
     participants = payload.get("participants", [])
     for agent_name in participants:
+        if agent_name == "__no_response__":
+            continue
         db.add(ChannelMember(channel_id=channel.id, agent_name=agent_name))
+
+    # Add initial human participants. Each email gets both a workspace
+    # collaborator row (so the mention picker shows them everywhere) and
+    # a channel_human_members row (so push fan-out for any message in
+    # this channel reaches their devices, not just @-mentions).
+    human_participants = payload.get("human_participants", []) or []
+    for email_raw in human_participants:
+        email = (email_raw or "").strip().lower()
+        if not email or "@" not in email:
+            continue
+        # Upsert collaborator — same trust model as _upsert_human_collaborator
+        existing_collab = db.execute(
+            select(WorkspaceCollaborator).where(
+                WorkspaceCollaborator.workspace_id == str(workspace.id),
+                WorkspaceCollaborator.email == email,
+            )
+        ).scalar_one_or_none()
+        if not existing_collab:
+            db.add(WorkspaceCollaborator(
+                workspace_id=str(workspace.id),
+                email=email,
+                role="editor",
+                added_by=event.source or email,
+            ))
+        # Upsert channel membership so chat-path pushes go to them.
+        existing_member = db.execute(
+            select(ChannelHumanMember).where(
+                ChannelHumanMember.channel_id == channel.id,
+                ChannelHumanMember.user_email == email,
+            )
+        ).scalar_one_or_none()
+        if not existing_member:
+            db.add(ChannelHumanMember(channel_id=channel.id, user_email=email))
 
     db.flush()
 
@@ -311,8 +346,36 @@ async def _handle_channel_create(event: Event, ctx: PipelineContext) -> Optional
     return event
 
 
+def _is_channel_admin(event_source: str, channel, agent_name: str) -> bool:
+    """Who is allowed to manage channel membership.
+
+    Three sources are accepted:
+      • a human user (`human:<name>`) — workspace clients act on behalf
+        of the logged-in human
+      • the channel's master agent (`openagents:<master>`) — owner can
+        manage their own thread
+      • the agent being added/removed itself (`openagents:<agent_name>`) —
+        agents can join channels they've been invited to and leave on
+        their own initiative
+    """
+    src = event_source or ""
+    if src.startswith("human:"):
+        return True
+    if channel.master_agent and src == f"openagents:{channel.master_agent}":
+        return True
+    if src == f"openagents:{agent_name}":
+        return True
+    return False
+
+
 async def _handle_channel_join(event: Event, ctx: PipelineContext) -> Optional[Event]:
-    """network.channel.join → add ChannelMember."""
+    """network.channel.join → add ChannelMember.
+
+    Routine channels (`routines:<agent>`) are locked single-agent queues —
+    we raise EventRejected so clients can roll back any optimistic UI.
+    The owner is added in-line when the channel is first created (see
+    app/routers/routines.py).
+    """
     from app.models import Channel, ChannelMember
 
     db = ctx.extra["db"]
@@ -323,6 +386,12 @@ async def _handle_channel_join(event: Event, ctx: PipelineContext) -> Optional[E
     if not channel_name or not agent_name:
         return None
 
+    if channel_name.startswith("routines:"):
+        raise EventRejected(
+            "workspace_mod",
+            "routine_channel_locked: membership of routines:* is managed by the system",
+        )
+
     channel = db.execute(
         select(Channel).where(
             Channel.workspace_id == workspace.id,
@@ -330,7 +399,14 @@ async def _handle_channel_join(event: Event, ctx: PipelineContext) -> Optional[E
         )
     ).scalar_one_or_none()
     if not channel:
-        return None
+        raise EventRejected("workspace_mod", "channel_not_found")
+
+    if not _is_channel_admin(event.source or "", channel, agent_name):
+        raise EventRejected(
+            "workspace_mod",
+            "channel_join_forbidden: only humans, the channel master, or "
+            "the agent being added may invite",
+        )
 
     # Check if already a member
     existing = db.execute(
@@ -351,7 +427,12 @@ async def _handle_channel_join(event: Event, ctx: PipelineContext) -> Optional[E
 
 
 async def _handle_channel_leave(event: Event, ctx: PipelineContext) -> Optional[Event]:
-    """network.channel.leave → remove ChannelMember."""
+    """network.channel.leave → remove ChannelMember.
+
+    Routine channels are locked — removing the owner is rejected so the
+    queue keeps its single-agent invariant. Returns EventRejected so
+    clients can roll back optimistic UI.
+    """
     from app.models import Channel, ChannelMember
 
     db = ctx.extra["db"]
@@ -362,6 +443,12 @@ async def _handle_channel_leave(event: Event, ctx: PipelineContext) -> Optional[
     if not channel_name or not agent_name:
         return None
 
+    if channel_name.startswith("routines:"):
+        raise EventRejected(
+            "workspace_mod",
+            "routine_channel_locked: membership of routines:* is managed by the system",
+        )
+
     channel = db.execute(
         select(Channel).where(
             Channel.workspace_id == workspace.id,
@@ -369,7 +456,14 @@ async def _handle_channel_leave(event: Event, ctx: PipelineContext) -> Optional[
         )
     ).scalar_one_or_none()
     if not channel:
-        return None
+        raise EventRejected("workspace_mod", "channel_not_found")
+
+    if not _is_channel_admin(event.source or "", channel, agent_name):
+        raise EventRejected(
+            "workspace_mod",
+            "channel_leave_forbidden: only humans, the channel master, or "
+            "the agent being removed may leave",
+        )
 
     member = db.execute(
         select(ChannelMember).where(
@@ -406,10 +500,59 @@ def _extract_leading_mention(content: str, known_agents: List[str]) -> Optional[
     return None
 
 
-def _fallback_targets(event, channel, mentions: List[str]) -> List[str]:
+def _member_is_online(m) -> bool:
+    """True when a WorkspaceMember is actually live.
+
+    A crashed daemon leaves ``status='online'`` forever — the column is only
+    flipped to 'offline' on a *clean* leave/heartbeat-timeout path — so the
+    column alone is unreliable. We additionally require a fresh heartbeat,
+    matching how /v1/discover and the agents list compute liveness. Cloud
+    agents have no heartbeat loop, so for them the status column is trusted.
+    """
+    from app.config import config
+    from datetime import timedelta
+    if (m.status or "").lower() != "online":
+        return False
+    if (getattr(m, "agent_type", "") or "").startswith("cloud:"):
+        return True
+    hb = m.last_heartbeat
+    if not hb:
+        return False
+    if hb.tzinfo is None:
+        hb = hb.replace(tzinfo=timezone.utc)
+    timeout = timedelta(seconds=config.AGENT_TIMEOUT_SECONDS)
+    return (datetime.now(timezone.utc) - hb) <= timeout
+
+
+def _online_participant_names(db, workspace, channel) -> set:
+    """Agent names of channel participants that are actually live (online column
+    + fresh heartbeat). Routing prefers these so a thread whose previous agent
+    went offline (e.g. a dead daemon) doesn't keep targeting it and stranding
+    messages. Returns an empty set when status can't be resolved (callers then
+    fall back to treating all participants as candidates)."""
+    from app.models import WorkspaceMember
+    names = [p.agent_name for p in (channel.participants or [])]
+    if not names:
+        return set()
+    try:
+        rows = db.execute(
+            select(WorkspaceMember).where(
+                WorkspaceMember.workspace_id == workspace.id,
+                WorkspaceMember.agent_name.in_(names),
+            )
+        ).scalars().all()
+        return {m.agent_name for m in rows if _member_is_online(m)}
+    except Exception:
+        return set()
+
+
+def _fallback_targets(event, channel, mentions: List[str], online_names: set = None) -> List[str]:
     """Determine target agents when LLM router is unavailable.
 
-    Priority: explicit @mentions → master (for human/member msgs) → all participants.
+    Priority: explicit @mentions → master (for human/member msgs) → online
+    participant → any participant. When ``online_names`` is provided, an online
+    participant is chosen over an offline one so messages aren't stranded on a
+    dead agent. An explicit @mention is always honored as-is (the user chose it).
     """
     if mentions:
         return [mentions[0]]
@@ -420,9 +563,49 @@ def _fallback_targets(event, channel, mentions: List[str]) -> List[str]:
             if sender == channel.master_agent:
                 return []
         return [channel.master_agent]
-    # No master — target the first participant
+    # No master — prefer an online participant, else the first participant.
     participants = [p.agent_name for p in (channel.participants or [])]
+    if online_names:
+        online_first = [p for p in participants if p in online_names]
+        if online_first:
+            return [online_first[0]]
     return [participants[0]] if participants else []
+
+
+def _master_targets(event, channel, mentions: List[str]) -> List[str]:
+    """Deterministic routing for "master" orchestration mode (star topology).
+
+    The channel master is the single hub:
+      • human message      → the master (the master owns the request and
+        decides whether to answer or delegate)
+      • sub-agent message  → back to the master (results always return to
+        the hub, which decides the next hop)
+      • master's message   → if it @mentions sub-agents, delegate to them;
+        otherwise stop (the master answered the human directly)
+
+    Falls back to nothing (empty → sentinel) when the channel has no master;
+    callers may substitute the generic fallback in that case.
+    """
+    master = channel.master_agent
+    if not master:
+        return []
+
+    source = event.source or ""
+    if source.startswith("openagents:"):
+        sender = source[len("openagents:"):]
+        if sender == master:
+            # Master is delegating. Route to any mentioned sub-agents
+            # (never itself); no mention → the master answered, so stop.
+            participants = {p.agent_name for p in (channel.participants or [])}
+            delegated = [
+                m for m in mentions if m != master and m in participants
+            ]
+            return delegated
+        # A sub-agent spoke → return control to the master hub.
+        return [master]
+
+    # Human (or system) message → always the master.
+    return [master]
 
 
 _ROUTER_PROMPT = """\
@@ -433,7 +616,7 @@ message carefully and think about who is actually being addressed.
 Channel participants:
 {participants}
 Master agent: {master}
-
+{plan}
 Recent conversation (oldest → newest):
 {history}
 
@@ -529,11 +712,19 @@ def _get_llm_client():
     return _llm_client, provider
 
 
-async def _route_with_llm(channel, new_event: Event, db, workspace) -> List[str]:
+async def _route_with_llm(
+    channel, new_event: Event, db, workspace, workflow_instruction: Optional[str] = None
+) -> List[str]:
     """Use a small LLM to decide which agent(s) should respond next.
 
     Returns a list of agent names to target, or an empty list (stop).
     Falls back to empty list on any error.
+
+    ``workflow_instruction`` (set in "workflow" orchestration mode) is a
+    user-authored natural-language collaboration plan. When present it is
+    injected into the prompt as the authoritative routing policy, so the
+    same router engine steers the thread according to the user's plan
+    instead of the generic heuristics.
     """
     from app.config import config
     from app.models import EventRecord
@@ -586,8 +777,18 @@ async def _route_with_llm(channel, new_event: Event, db, workspace) -> List[str]
             )
         ).scalars().all()
     }
+    # Only offer ONLINE participants to the router when any are online — an
+    # offline agent (dead daemon) can't reply, so routing to it by
+    # conversational continuity just strands the message. If none are online,
+    # present all participants (the chosen one will pick the message up when it
+    # reconnects).
+    online_set = {
+        n for n in participant_names
+        if members.get(n) and _member_is_online(members[n])
+    }
+    candidate_names = [n for n in participant_names if n in online_set] if online_set else participant_names
     participant_lines = []
-    for name in participant_names:
+    for name in candidate_names:
         m = members.get(name)
         role = m.role if m else "member"
         desc = m.description if m and m.description else ""
@@ -604,9 +805,22 @@ async def _route_with_llm(channel, new_event: Event, db, workspace) -> List[str]
 
     content = (new_event.payload or {}).get("content", "")[:500]
 
+    # In "workflow" mode, the user-authored plan is the authoritative routing
+    # policy. Injected as its own block so the model weighs it above the
+    # generic heuristics below.
+    plan = ""
+    if workflow_instruction and workflow_instruction.strip():
+        plan = (
+            "\nCOLLABORATION PLAN (authoritative — follow this exactly when "
+            "deciding who speaks next; it overrides the generic guidance "
+            "below):\n"
+            f"{workflow_instruction.strip()}\n"
+        )
+
     prompt = _ROUTER_PROMPT.format(
         participants=participants_str,
         master=master,
+        plan=plan,
         history=history,
         sender=sender,
         content=content,
@@ -645,9 +859,11 @@ async def _route_with_llm(channel, new_event: Event, db, workspace) -> List[str]
             agent_name = raw_result[len("next:"):].strip().split(",")[0].strip()
             # Case-insensitive participant lookup, then canonicalize to
             # the stored case.
+            # Validate against the candidate set (online participants when any
+            # are online) so the router can't route to an offline agent while a
+            # live one is available.
             participants_by_lower = {
-                p.agent_name.lower(): p.agent_name
-                for p in (channel.participants or [])
+                name.lower(): name for name in candidate_names
             }
             canonical = participants_by_lower.get(agent_name.lower())
             if canonical is None:
@@ -680,7 +896,7 @@ async def _route_with_llm(channel, new_event: Event, db, workspace) -> List[str]
         # router can silently drop a legitimate follow-up question like
         # "how about Julia?" after a previous "final answer" message.
         if (new_event.source or "").startswith("human:"):
-            fallback = _fallback_targets(new_event, channel, [])
+            fallback = _fallback_targets(new_event, channel, [], online_set)
             if fallback:
                 logger.info(
                     "LLM router returned stop/invalid for human message — "
@@ -694,7 +910,7 @@ async def _route_with_llm(channel, new_event: Event, db, workspace) -> List[str]
         # Same safety net on exception: humans still get a reply.
         if (new_event.source or "").startswith("human:"):
             try:
-                fallback = _fallback_targets(new_event, channel, [])
+                fallback = _fallback_targets(new_event, channel, [], online_set)
                 if fallback:
                     return fallback
             except Exception:
@@ -703,6 +919,65 @@ async def _route_with_llm(channel, new_event: Event, db, workspace) -> List[str]
 
 
 _DEFAULT_TITLES = {"New Thread", "Session 1", None, ""}
+
+
+def _upsert_human_collaborator(workspace, payload: dict, db) -> None:
+    """First-write registration of a signed-in human into the workspace
+    roster, used downstream by the push fan-out to resolve `@bary` →
+    bary's device tokens. Reads `sender_email` and `sender_display_name`
+    from the event payload (web/Swift clients pass them on every human
+    chat post); does nothing if the email is missing — older clients
+    that don't yet identify themselves can't be mention-pushed.
+    """
+    email = (payload.get("sender_email") or "").strip().lower()
+    if not email:
+        return
+    display_name = (payload.get("sender_display_name") or "").strip() or None
+    from app.models import WorkspaceCollaborator
+    existing = db.execute(
+        select(WorkspaceCollaborator).where(
+            WorkspaceCollaborator.workspace_id == str(workspace.id),
+            WorkspaceCollaborator.email == email,
+        )
+    ).scalar_one_or_none()
+    if existing:
+        # Keep display_name fresh in case the user renamed their Google
+        # profile since last post.
+        if display_name and existing.display_name != display_name:
+            existing.display_name = display_name
+        return
+    db.add(WorkspaceCollaborator(
+        workspace_id=str(workspace.id),
+        email=email,
+        display_name=display_name,
+        role="editor",
+        added_by=email,
+    ))
+    db.flush()
+
+
+def _join_channel_as_human(channel, payload: dict, db) -> None:
+    """Slack-style implicit join: the first time a human posts in a
+    channel, add them to `channel_human_members` so future chat in this
+    channel pushes to their devices. Idempotent — no-op when the row
+    already exists. Needs `sender_email` on the payload; anonymous
+    token-only visitors leave no membership trail and so don't get
+    pushed for non-mention chat.
+    """
+    email = (payload.get("sender_email") or "").strip().lower()
+    if not email or channel is None:
+        return
+    from app.models import ChannelHumanMember
+    existing = db.execute(
+        select(ChannelHumanMember).where(
+            ChannelHumanMember.channel_id == channel.id,
+            ChannelHumanMember.user_email == email,
+        )
+    ).scalar_one_or_none()
+    if existing:
+        return
+    db.add(ChannelHumanMember(channel_id=channel.id, user_email=email))
+    db.flush()
 
 
 def _auto_title_channel(channel, content: str, db) -> None:
@@ -760,9 +1035,9 @@ async def _handle_message_posted(event: Event, ctx: PipelineContext) -> Optional
             # the router checks session_error and returns an error response.
             return event
 
-    # "thinking" and "status" messages are intermediate agent output —
-    # they should NOT trigger other agents.
-    if message_type in ("thinking", "status"):
+    # "thinking", "status", and "todos" messages are intermediate agent output
+    # — they should NOT trigger other agents.
+    if message_type in ("thinking", "status", "todos"):
         return event
 
     # Parse @mentions from message content (used for human message routing)
@@ -789,6 +1064,12 @@ async def _handle_message_posted(event: Event, ctx: PipelineContext) -> Optional
     # Auto-name channel from first human message if title is default/empty
     if event.source.startswith("human:") and channel:
         _auto_title_channel(channel, content, db)
+        # First post from a human → make sure they're in the workspace
+        # roster so @-mention pushes can find their device tokens later.
+        _upsert_human_collaborator(workspace, event.payload or {}, db)
+        # First post in *this* channel → auto-join so future non-mention
+        # chat in the channel pushes to this human's devices.
+        _join_channel_as_human(channel, event.payload or {}, db)
 
     # Skip non-human, non-agent sources
     if not event.source.startswith("human:") and not event.source.startswith("openagents:"):
@@ -797,17 +1078,42 @@ async def _handle_message_posted(event: Event, ctx: PipelineContext) -> Optional
     if not channel:
         return event
 
-    # ── Multi-agent channel: always use LLM router ──────────────────
-    if len(channel.participants or []) >= 2:
+    # Online participants — used so routing prefers a live agent over one whose
+    # daemon is down (an offline target just strands the message).
+    online_names = _online_participant_names(db, workspace, channel)
+
+    # ── Multi-agent channel: route per the thread's orchestration mode ──
+    real_participants = [
+        p for p in (channel.participants or [])
+        if p.agent_name != "__no_response__"
+    ]
+    if len(real_participants) >= 2:
         from app.config import config
-        if config.ROUTER_LLM_ENABLED and _get_router_api_key():
+        mode = (getattr(channel, "orchestration_mode", None) or "dynamic").lower()
+
+        if mode == "master":
+            # Deterministic star topology — no LLM. If the channel somehow
+            # has no master, fall back to the generic mention/online logic
+            # so messages aren't stranded.
+            if channel.master_agent:
+                targets = _master_targets(event, channel, mentions)
+            else:
+                targets = _fallback_targets(event, channel, mentions, online_names)
+        elif mode == "workflow" and config.ROUTER_LLM_ENABLED and _get_router_api_key():
+            # LLM router steered by the user's natural-language plan.
+            targets = await _route_with_llm(
+                channel, event, db, workspace,
+                workflow_instruction=getattr(channel, "orchestration_instruction", None),
+            )
+        elif config.ROUTER_LLM_ENABLED and _get_router_api_key():
+            # "dynamic" (default) — generic LLM router.
             targets = await _route_with_llm(channel, event, db, workspace)
         else:
-            # LLM router not available — fallback to mention or master
-            targets = _fallback_targets(event, channel, mentions)
+            # LLM router not available — fallback to mention or master.
+            targets = _fallback_targets(event, channel, mentions, online_names)
     # ── Single-agent channel ────────────────────────────────────────
     else:
-        targets = _fallback_targets(event, channel, mentions)
+        targets = _fallback_targets(event, channel, mentions, online_names)
 
     # ALWAYS set target_agents, even when nobody should respond.
     #
@@ -821,14 +1127,36 @@ async def _handle_message_posted(event: Event, ctx: PipelineContext) -> Optional
     event.metadata["target_agents"] = targets if targets else ["__no_response__"]
 
     # Auto-add targeted agents as channel participants so they can poll
-    # for messages on this channel.
-    from app.models import ChannelMember
-    existing = {p.agent_name for p in (channel.participants or [])}
-    for agent_name in event.metadata.get("target_agents", []):
-        if agent_name not in existing:
-            db.add(ChannelMember(channel_id=channel.id, agent_name=agent_name))
-            existing.add(agent_name)
-    db.flush()
+    # for messages on this channel. Three guards:
+    #   1. Never add the `__no_response__` sentinel — it's a routing
+    #      signal, not a real agent.
+    #   2. Only auto-add when the sender is a human. Agent→agent routing
+    #      decisions (from the LLM router or master-fallback) used to
+    #      drag bystander agents into channels they didn't belong in.
+    #   3. Routine channels (`routines:<agent>`) are locked single-agent
+    #      job queues — never add anyone but the owner.
+    if event.source and event.source.startswith("human:") and \
+            not channel.name.startswith("routines:"):
+        from app.models import ChannelMember
+        existing = {p.agent_name for p in (channel.participants or [])}
+        # Clean up any __no_response__ sentinels that leaked into participants
+        if "__no_response__" in existing:
+            bogus = db.execute(
+                select(ChannelMember).where(
+                    ChannelMember.channel_id == channel.id,
+                    ChannelMember.agent_name == "__no_response__",
+                )
+            ).scalar_one_or_none()
+            if bogus:
+                db.delete(bogus)
+            existing.discard("__no_response__")
+        for agent_name in event.metadata.get("target_agents", []):
+            if agent_name == "__no_response__":
+                continue
+            if agent_name not in existing:
+                db.add(ChannelMember(channel_id=channel.id, agent_name=agent_name))
+                existing.add(agent_name)
+        db.flush()
 
     return event
 

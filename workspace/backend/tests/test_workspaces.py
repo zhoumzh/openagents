@@ -4,6 +4,7 @@ Tests for workspace CRUD endpoints.
 """
 
 import pytest
+from unittest.mock import patch, MagicMock
 
 
 class TestCreateWorkspace:
@@ -100,6 +101,56 @@ class TestUpdateWorkspace:
         assert resp.status_code == 200
         assert resp.json()["data"]["settings"]["theme"] == "dark"
 
+    def test_browser_enabled_defaults_false(self, client, workspace):
+        """A fresh workspace has browserEnabled = false."""
+        resp = client.get(f"/v1/workspaces/{workspace['id']}",
+                          headers={"X-Workspace-Token": workspace["token"]})
+        assert resp.status_code == 200
+        assert resp.json()["data"]["browserEnabled"] is False
+
+    def test_update_browser_enabled_true(self, client, workspace):
+        """Flip browser_enabled on; response surfaces it at the top level."""
+        resp = client.patch(f"/v1/workspaces/{workspace['id']}", json={
+            "browser_enabled": True,
+        }, headers={"X-Workspace-Token": workspace["token"]})
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["browserEnabled"] is True
+        # And it's mirrored inside the settings dict
+        assert data["settings"].get("browser_enabled") is True
+
+    def test_browser_enabled_round_trips(self, client, workspace):
+        """A subsequent GET reflects the persisted toggle."""
+        client.patch(f"/v1/workspaces/{workspace['id']}",
+                     json={"browser_enabled": True},
+                     headers={"X-Workspace-Token": workspace["token"]})
+        resp = client.get(f"/v1/workspaces/{workspace['id']}",
+                          headers={"X-Workspace-Token": workspace["token"]})
+        assert resp.json()["data"]["browserEnabled"] is True
+
+    def test_browser_enabled_preserves_other_settings(self, client, workspace):
+        """Flipping browser_enabled doesn't trample unrelated settings keys."""
+        client.patch(f"/v1/workspaces/{workspace['id']}",
+                     json={"settings": {"theme": "dark"}},
+                     headers={"X-Workspace-Token": workspace["token"]})
+        resp = client.patch(f"/v1/workspaces/{workspace['id']}", json={
+            "browser_enabled": True,
+        }, headers={"X-Workspace-Token": workspace["token"]})
+        data = resp.json()["data"]
+        assert data["settings"]["theme"] == "dark"
+        assert data["settings"]["browser_enabled"] is True
+        assert data["browserEnabled"] is True
+
+    def test_browser_enabled_false_clears_panel(self, client, workspace):
+        """Toggling off persists the false value."""
+        client.patch(f"/v1/workspaces/{workspace['id']}",
+                     json={"browser_enabled": True},
+                     headers={"X-Workspace-Token": workspace["token"]})
+        resp = client.patch(f"/v1/workspaces/{workspace['id']}", json={
+            "browser_enabled": False,
+        }, headers={"X-Workspace-Token": workspace["token"]})
+        assert resp.json()["data"]["browserEnabled"] is False
+
 
 class TestDeleteWorkspace:
     """DELETE /v1/workspaces/{id} — soft-delete workspace."""
@@ -131,6 +182,89 @@ class TestDeleteWorkspace:
         """Unauthenticated DELETE is rejected — workspace must not be deleted."""
         resp = client.delete(f"/v1/workspaces/{workspace['id']}")
         assert resp.status_code == 401
+
+
+class TestChannelOrchestrationMode:
+    """PATCH /v1/workspaces/{id}/channels/{name} — orchestration mode."""
+
+    def _patch(self, client, workspace, body):
+        return client.patch(
+            f"/v1/workspaces/{workspace['id']}/channels/{workspace['channel']['name']}",
+            json=body,
+            headers={"X-Workspace-Token": workspace["token"]},
+        )
+
+    def test_default_mode_is_dynamic(self, client, workspace):
+        assert workspace["channel"].get("orchestrationMode") == "dynamic"
+
+    def test_set_master_mode(self, client, workspace):
+        resp = self._patch(client, workspace, {"orchestration_mode": "master"})
+        assert resp.status_code == 200
+        assert resp.json()["data"]["orchestrationMode"] == "master"
+
+    def test_set_workflow_mode_with_instruction_round_trips(self, client, workspace):
+        plan = "First @agent-alpha writes tests, then reviews."
+        resp = self._patch(client, workspace, {
+            "orchestration_mode": "workflow",
+            "orchestration_instruction": plan,
+        })
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["orchestrationMode"] == "workflow"
+        assert data["orchestrationInstruction"] == plan
+        # Round-trip via GET
+        got = client.get(
+            f"/v1/workspaces/{workspace['id']}/channels/{workspace['channel']['name']}",
+            headers={"X-Workspace-Token": workspace["token"]},
+        )
+        assert got.json()["data"]["orchestrationInstruction"] == plan
+
+    def test_invalid_mode_rejected(self, client, workspace):
+        resp = self._patch(client, workspace, {"orchestration_mode": "bogus"})
+        assert resp.status_code == 400
+
+    def test_empty_instruction_clears_plan(self, client, workspace):
+        self._patch(client, workspace, {
+            "orchestration_mode": "workflow",
+            "orchestration_instruction": "some plan",
+        })
+        resp = self._patch(client, workspace, {"orchestration_instruction": "   "})
+        assert resp.status_code == 200
+        assert resp.json()["data"]["orchestrationInstruction"] is None
+
+
+class TestGenerateMemberDescription:
+    """POST /v1/workspaces/{id}/members/{name}/generate-description."""
+
+    def _url(self, workspace, name="agent-alpha"):
+        return f"/v1/workspaces/{workspace['id']}/members/{name}/generate-description"
+
+    @patch("app.mods.workspace_mod._get_llm_client")
+    @patch("app.mods.workspace_mod._get_router_api_key", return_value="test-key")
+    @patch("app.mods.workspace_mod._get_router_model", return_value="claude-haiku-4-5-20251001")
+    def test_generate_returns_suggestion(self, _m, _k, mock_get_client, client, workspace):
+        content = MagicMock()
+        content.text = '"Backend engineer that builds APIs and fixes bugs."'
+        resp = MagicMock()
+        resp.content = [content]
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = resp
+        mock_get_client.return_value = (mock_client, "anthropic")
+
+        r = client.post(self._url(workspace), headers={"X-Workspace-Token": workspace["token"]})
+        assert r.status_code == 200
+        desc = r.json()["data"]["description"]
+        # Wrapping quotes and trailing period are stripped.
+        assert desc == "Backend engineer that builds APIs and fixes bugs"
+
+    @patch("app.mods.workspace_mod._get_router_api_key", return_value="")
+    def test_generate_without_key_returns_400(self, _k, client, workspace):
+        r = client.post(self._url(workspace), headers={"X-Workspace-Token": workspace["token"]})
+        assert r.status_code == 400
+
+    def test_generate_unknown_member_returns_404(self, client, workspace):
+        r = client.post(self._url(workspace, "nope-bot"), headers={"X-Workspace-Token": workspace["token"]})
+        assert r.status_code == 404
 
         # Workspace must still exist
         get = client.get(

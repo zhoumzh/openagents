@@ -13,6 +13,13 @@ const NanoClawAdapter = require('./nanoclaw');
 const CursorAdapter = require('./cursor');
 const HermesAdapter = require('./hermes');
 const GeminiAdapter = require('./gemini');
+const KimiAdapter = require('./kimi');
+const AiderAdapter = require('./aider');
+const GooseAdapter = require('./goose');
+const CopilotAdapter = require('./copilot');
+const ClineAdapter = require('./cline');
+const AmpAdapter = require('./amp');
+const MiniSweAgentAdapter = require('./mini');
 
 const ADAPTER_MAP = {
   openclaw: OpenClawAdapter,
@@ -23,11 +30,18 @@ const ADAPTER_MAP = {
   cursor: CursorAdapter,
   hermes: HermesAdapter,
   gemini: GeminiAdapter,
+  kimi: KimiAdapter,
+  aider: AiderAdapter,
+  goose: GooseAdapter,
+  copilot: CopilotAdapter,
+  cline: ClineAdapter,
+  amp: AmpAdapter,
+  'mini-swe-agent': MiniSweAgentAdapter,
 };
 
 /**
  * Create an adapter instance for the given agent type.
- * @param {string} type - Agent type (openclaw, claude, codex, opencode, nanoclaw, cursor, hermes)
+ * @param {string} type - Agent type (openclaw, claude, codex, opencode, nanoclaw, cursor, hermes, gemini, kimi, aider, goose, copilot, cline, amp, mini-swe-agent)
  * @param {object} opts - Adapter constructor options
  * @returns {BaseAdapter}
  */
@@ -49,6 +63,13 @@ module.exports = {
   CursorAdapter,
   HermesAdapter,
   GeminiAdapter,
+  KimiAdapter,
+  AiderAdapter,
+  GooseAdapter,
+  CopilotAdapter,
+  ClineAdapter,
+  AmpAdapter,
+  MiniSweAgentAdapter,
   createAdapter,
   ADAPTER_MAP,
 };

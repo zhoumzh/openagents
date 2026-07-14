@@ -65,6 +65,7 @@ class EventRecord(Base):
         Index("idx_events_network_type", "network_id", "type"),
         Index("idx_events_network_target", "network_id", "target"),
         Index("idx_events_network_timestamp", "network_id", "timestamp"),
+        Index("idx_events_network_type_target_ts", "network_id", "type", "target", "timestamp"),
     )
 
 
@@ -103,6 +104,7 @@ class WorkspaceMember(Base):
     server_host = Column(Text, nullable=True)          # hostname/IP where agent runs
     working_dir = Column(Text, nullable=True)          # working directory on the server
     description = Column(Text, nullable=True)           # user-provided description of agent's role/capabilities
+    enabled_skills = Column(JSONB, nullable=True)      # {"files": true, "browser": false, ...} — null = all defaults
     status = Column(Text, default="offline")         # online | offline
     last_heartbeat = Column(DateTime(timezone=True), nullable=True)
     joined_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
@@ -132,12 +134,32 @@ class Channel(Base):
     created_by = Column(Text, nullable=True)
     master_agent = Column(Text, nullable=True)       # per-channel master
     resume_from = Column(Text, nullable=True)         # channel name to resume context from
+    # Multi-agent collaboration mode for this thread:
+    #   "dynamic"  → LLM router picks next speaker (generic prompt) [default]
+    #   "master"   → deterministic star: humans + sub-agents route to the
+    #                master; the master delegates via @mention
+    #   "workflow" → LLM router steered by a user-authored natural-language
+    #                collaboration plan (see orchestration_instruction)
+    orchestration_mode = Column(Text, nullable=False, server_default=text("'dynamic'"))
+    # Free-text collaboration plan (with @agent mentions) used only in
+    # "workflow" mode; injected into the router prompt as the routing policy.
+    orchestration_instruction = Column(Text, nullable=True)
     status = Column(Text, default="active")           # active | archived | deleted
     starred = Column(Boolean, default=False, server_default=text("FALSE"))
+    last_event_at = Column(BigInteger, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
 
     workspace = relationship("Workspace", back_populates="channels")
     participants = relationship("ChannelMember", back_populates="channel", cascade="all, delete-orphan", lazy="selectin")
+
+    __table_args__ = (
+        Index("uq_channels_ws_name", "workspace_id", "name", unique=True),
+        # Serves /v1/discover's `WHERE workspace_id = ? AND status != 'deleted'`.
+        Index("idx_channels_workspace_status", "workspace_id", "status"),
+        # Serves the timer-loop auto-archive scan
+        # (`status = 'active' AND last_event_at < cutoff`).
+        Index("idx_channels_status_last_event", "status", "last_event_at"),
+    )
 
 
 class ChannelMember(Base):
@@ -151,6 +173,28 @@ class ChannelMember(Base):
 
     __table_args__ = (
         PrimaryKeyConstraint("channel_id", "agent_name"),
+    )
+
+
+class ChannelHumanMember(Base):
+    """Per-channel human participant — Slack-style thread membership.
+
+    Lives alongside `ChannelMember` (agents only) rather than mixing
+    `agent_name` + `user_email` into one row, which would muddy the
+    existing agent routing queries. Auto-populated by the workspace mod
+    on first human post in a channel; consulted by `services/push.py` to
+    decide whose devices get a banner for non-mention chat messages.
+    Mentions still wake the mentioned human regardless of membership.
+    """
+    __tablename__ = "channel_human_members"
+
+    channel_id = Column(UUID(as_uuid=False), ForeignKey("channels.id", ondelete="CASCADE"), nullable=False)
+    user_email = Column(Text, nullable=False)               # normalized lowercase
+    joined_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        PrimaryKeyConstraint("channel_id", "user_email"),
+        Index("idx_channel_human_members_email", "user_email"),
     )
 
 
@@ -179,6 +223,10 @@ class WorkspaceCollaborator(Base):
     role = Column(Text, default="editor")               # editor | viewer
     added_by = Column(Text, nullable=True)              # email of who added
     added_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    # Google `displayName` captured the first time the human posted in
+    # this workspace. Mention picker shows it; push.py uses it (along
+    # with the email local-part) to resolve "@bary" → device tokens.
+    display_name = Column(Text, nullable=True)
 
     workspace = relationship("Workspace", back_populates="collaborators")
 
@@ -186,6 +234,33 @@ class WorkspaceCollaborator(Base):
         UniqueConstraint("workspace_id", "email", name="uq_collaborator_workspace_email"),
         Index("idx_collaborators_workspace", "workspace_id"),
         Index("idx_collaborators_email", "email"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shared knowledge base
+# ---------------------------------------------------------------------------
+
+class KnowledgeEntry(Base):
+    """A knowledge base entry — workspace-global markdown document."""
+    __tablename__ = "knowledge_entries"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    slug = Column(Text, nullable=False)
+    title = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    storage_key = Column(Text, nullable=True)
+    content_size = Column(Integer, nullable=True)
+    created_by = Column(Text, nullable=False)
+    updated_by = Column(Text, nullable=True)
+    status = Column(Text, nullable=False, default="active")
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "slug", name="uq_knowledge_workspace_slug"),
+        Index("idx_knowledge_workspace_status", "workspace_id", "status"),
     )
 
 
@@ -290,6 +365,208 @@ class BrowserUsage(Base):
         Index("idx_browser_usage_workspace", "workspace_id"),
         Index("idx_browser_usage_opened_by", "opened_by"),
         Index("idx_browser_usage_started", "started_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Push-notification device registration
+# ---------------------------------------------------------------------------
+
+class DeviceToken(Base):
+    """An iOS / future-Android device's FCM token, scoped to a workspace.
+
+    Created by `POST /v1/devices/register` from the OpenAgents Go iOS app
+    (and any future mobile client). Used by `services/push.py` to fan out
+    APNs notifications when relevant workspace events fire.
+
+    Tied to a workspace via `workspace_id` — the same auth model as every
+    other table here. We do not link to a specific human user because the
+    workspace token is the only identity the iOS client carries today.
+    """
+
+    __tablename__ = "device_tokens"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid, server_default=text("gen_random_uuid()"))
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    fcm_token = Column(Text, nullable=False)
+    device_type = Column(Text, nullable=False)            # "ios" | future: "android" | "macos"
+    bundle_id = Column(Text, nullable=True)               # e.g. "com.openagents.go"
+    # Google email of the signed-in user on the device that registered.
+    # NULL for older clients without a user identity; populated by builds
+    # that started sending `userEmail` with /v1/devices/register. The push
+    # fan-out filters by this column when a @-mention resolves to a human
+    # collaborator so only that specific human's devices get woken up.
+    user_email = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    last_seen_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "fcm_token", name="uq_device_token_workspace_fcm"),
+        Index("idx_device_tokens_workspace", "workspace_id"),
+        Index("idx_device_tokens_workspace_user", "workspace_id", "user_email"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Planning: To-dos & Timers
+# ---------------------------------------------------------------------------
+
+class TodoRecord(Base):
+    """A single to-do item belonging to an agent in a channel."""
+    __tablename__ = "todos"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    channel_name = Column(Text, nullable=False)
+    thread_id = Column(Text, nullable=True)
+    created_by = Column(Text, nullable=False)              # "openagents:agent-name"
+    assignee = Column(Text, nullable=False)                # defaults to created_by agent
+    content = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="pending")  # pending | in_progress | completed
+    position = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        Index("idx_todos_workspace_channel", "workspace_id", "channel_name"),
+        Index("idx_todos_workspace_created_by", "workspace_id", "created_by"),
+    )
+
+
+class TimerRecord(Base):
+    """A scheduled timer that posts a message when it fires."""
+    __tablename__ = "timers"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    channel_name = Column(Text, nullable=False)
+    thread_id = Column(Text, nullable=True)
+    created_by = Column(Text, nullable=False)              # "openagents:agent-name"
+    message = Column(Text, nullable=False)
+    delay_seconds = Column(Integer, nullable=False)
+    fires_at = Column(DateTime(timezone=True), nullable=False)
+    status = Column(Text, nullable=False, default="active")  # active | fired | cancelled
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        Index("idx_timers_fires_at_status", "fires_at", "status"),
+        Index("idx_timers_workspace_channel", "workspace_id", "channel_name"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Routines (recurring scheduled tasks)
+# ---------------------------------------------------------------------------
+
+class RoutineRecord(Base):
+    """A recurring scheduled task that fires on a repeating schedule."""
+    __tablename__ = "routines"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    channel_name = Column(Text, nullable=False)
+    thread_id = Column(Text, nullable=True)
+    created_by = Column(Text, nullable=False)              # "openagents:agent-name"
+    name = Column(Text, nullable=False)                     # human-readable label
+    message = Column(Text, nullable=False)                  # message posted when routine fires
+    context = Column(Text, nullable=True)                    # comprehensive background for the routine
+    # Daily schedule mode: hour + minute (+ optional days). One of the two
+    # modes must be set when the row is created (enforced in the router).
+    schedule_hour = Column(Integer, nullable=True)          # 0-23 UTC
+    schedule_minute = Column(Integer, nullable=True)        # 0-59
+    schedule_days = Column(JSONB, nullable=True)            # null=every day, or [0..6] (0=Mon)
+    # Interval mode: fire every N minutes. Mutually exclusive with hour/minute.
+    schedule_interval_minutes = Column(Integer, nullable=True)
+    timezone = Column(Text, default="UTC")
+    next_fires_at = Column(DateTime(timezone=True), nullable=False)
+    last_fired_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(Text, nullable=False, default="active")  # active | paused | cancelled
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        Index("idx_routines_workspace_channel", "workspace_id", "channel_name"),
+        Index("idx_routines_next_fires_status", "next_fires_at", "status"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Inbox / Notifications
+# ---------------------------------------------------------------------------
+
+class NotificationRecord(Base):
+    """A notification sent by an agent to the workspace inbox."""
+    __tablename__ = "notifications"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    created_by = Column(Text, nullable=False)              # "openagents:agent-name" or "system:routine"
+    title = Column(Text, nullable=False)
+    message = Column(Text, nullable=False)
+    priority = Column(Text, nullable=False, default="normal")  # low | normal | high
+    is_read = Column(Boolean, default=False, server_default=text("FALSE"))
+    channel_name = Column(Text, nullable=True)              # optional link to related thread
+    thread_id = Column(Text, nullable=True)
+    link_url = Column(Text, nullable=True)                  # optional external link
+    status = Column(Text, nullable=False, default="active") # active | dismissed | expired
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    read_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("idx_notifications_workspace_status", "workspace_id", "status"),
+        Index("idx_notifications_workspace_read", "workspace_id", "is_read"),
+        Index("idx_notifications_created_at", "created_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cloud agent configurations
+# ---------------------------------------------------------------------------
+
+class CloudAgentConfig(Base):
+    """Configuration for a cloud-based agent (API-proxied by the server)."""
+    __tablename__ = "cloud_agent_configs"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    agent_name = Column(Text, nullable=False)
+    provider = Column(Text, nullable=False)              # "openai", "google", "xai", "deepseek"
+    model = Column(Text, nullable=False)                  # "gpt-4o", "gemini-2.5-pro", etc.
+    category = Column(Text, nullable=False, default="chat")  # "chat" or "image"
+    api_key = Column(Text, nullable=False)
+    base_url = Column(Text, nullable=True)                # custom OpenAI-compatible endpoint
+    system_prompt = Column(Text, nullable=True)
+    max_tokens = Column(Integer, nullable=True)
+    status = Column(Text, nullable=False, default="active")  # active | disabled
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "agent_name", name="uq_cloud_agent_workspace_name"),
+        Index("idx_cloud_agent_workspace", "workspace_id"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shared conversation snapshots
+# ---------------------------------------------------------------------------
+
+class ShareSnapshot(Base):
+    """A public snapshot of a conversation thread."""
+    __tablename__ = "share_snapshots"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    channel_name = Column(Text, nullable=False)
+    title = Column(Text, nullable=True)
+    created_by = Column(Text, nullable=False)
+    snapshot_data = Column(JSONB, nullable=False)
+    share_token = Column(Text, unique=True, nullable=False)
+    message_count = Column(Integer, nullable=False, default=0)
+    status = Column(Text, nullable=False, default="active")
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        Index("idx_share_snapshots_workspace", "workspace_id"),
+        Index("idx_share_snapshots_token", "share_token"),
     )
 
 

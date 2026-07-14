@@ -37,6 +37,23 @@ describe('Registry', () => {
     assert.ok(entry.env_config);
   });
 
+  it('kimi entry has Moonshot defaults and OpenAI-compatible env_config', () => {
+    const reg = new Registry(tmpDir);
+    const entry = reg.getEntry('kimi');
+    assert.ok(entry, 'bundled registry should have kimi');
+    assert.equal(entry.label, 'Kimi');
+    assert.ok(entry.adapter);
+    assert.equal(entry.adapter.class, 'KimiAdapter');
+
+    const fields = entry.env_config || [];
+    const baseUrl = fields.find((f) => f.name === 'KIMI_BASE_URL');
+    const model = fields.find((f) => f.name === 'KIMI_MODEL');
+    const apiKey = fields.find((f) => f.name === 'KIMI_API_KEY');
+    assert.ok(apiKey && apiKey.password, 'KIMI_API_KEY must be a password field');
+    assert.equal(baseUrl.default, 'https://api.moonshot.ai/v1');
+    assert.equal(model.default, 'kimi-k2.6');
+  });
+
   it('codex entry exposes direct and CLI readiness fields', () => {
     const reg = new Registry(tmpDir);
     const entry = reg.getEntry('codex');
@@ -61,7 +78,9 @@ describe('Registry', () => {
 
   it('getEnvFields returns empty for agent without env_config', () => {
     const reg = new Registry(tmpDir);
-    const fields = reg.getEnvFields('aider');
+    // claude is a CLI-login agent with no env_config (aider/copilot were used
+    // here before, but both now ship an env_config).
+    const fields = reg.getEnvFields('claude');
     assert.ok(Array.isArray(fields));
     assert.equal(fields.length, 0);
   });
@@ -85,6 +104,26 @@ describe('Registry', () => {
     // Cache entry is merged with bundled entries
     assert.ok(catalog.length > 1);
     assert.ok(catalog.find(e => e.name === 'fake-agent'));
+  });
+
+  it('bundled install data overrides stale cached install data', () => {
+    const staleCursor = [{
+      name: 'cursor',
+      label: 'Cursor',
+      install: {
+        binary: 'agent',
+        npm: 'npm install -g @cursor/cli',
+      },
+    }];
+    fs.writeFileSync(path.join(tmpDir, 'agent_catalog.json'), JSON.stringify(staleCursor), 'utf-8');
+
+    const reg = new Registry(tmpDir);
+    const cursor = reg.getEntry('cursor');
+
+    assert.equal(cursor.install.binary, 'cursor-agent');
+    assert.deepEqual(cursor.install.binary_aliases, ['agent']);
+    assert.equal(cursor.install.npm, undefined);
+    assert.match(cursor.install.windows, /WindowsPowerShell\\v1\.0\\powershell\.exe/);
   });
 
   it('ignores expired cache', () => {

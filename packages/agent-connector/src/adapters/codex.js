@@ -19,6 +19,7 @@ const { execSync, spawn } = require('child_process');
 const http = require('http');
 const https = require('https');
 
+const { whereBinary } = require('../paths');
 const BaseAdapter = require('./base');
 const { buildOpenclawSystemPrompt } = require('./workspace-prompt');
 
@@ -49,7 +50,8 @@ class CodexAdapter extends BaseAdapter {
     this._loadSessions();
 
     // Determine mode:
-    // - CLI mode: only works with OpenAI's native Responses API (api.openai.com)
+    // - CLI mode: works with OpenAI's native Responses API (api.openai.com)
+    //   OR with subscription-based auth via 'codex login'
     // - Direct API mode: works with any OpenAI-compatible chat completions endpoint
     this._codexBin = this._findCodexBinary();
     this._directMode = false;
@@ -59,9 +61,10 @@ class CodexAdapter extends BaseAdapter {
     const isOpenAiNative = !this._directBaseUrl ||
       this._directBaseUrl.includes('api.openai.com');
 
-    if (this._codexBin && isOpenAiNative) {
+    if (this._codexBin && (isOpenAiNative || !this._directApiKey)) {
+      // CLI mode: either OpenAI native API or subscription auth (no API key)
       this._useCliMode = true;
-      this._log(`CLI mode: ${this._codexBin}`);
+      this._log(`CLI mode: ${this._codexBin}${!this._directApiKey ? ' (subscription auth)' : ''}`);
     } else if (this._directApiKey && this._directBaseUrl) {
       this._directMode = true;
       if (this._codexBin) {
@@ -70,7 +73,7 @@ class CodexAdapter extends BaseAdapter {
         this._log(`Direct LLM mode: ${this._directBaseUrl} model=${this._directModel || 'gpt-4o'}`);
       }
     } else if (this._codexBin) {
-      // CLI binary found, no custom base URL — assume OpenAI
+      // CLI binary found, no custom base URL — assume OpenAI or subscription auth
       this._useCliMode = true;
       this._log(`CLI mode: ${this._codexBin}`);
     } else {
@@ -123,17 +126,12 @@ class CodexAdapter extends BaseAdapter {
     const portableCandidate = path.join(home, '.openagents', 'nodejs', 'node_modules', '.bin', `codex${ext}`);
     if (fs.existsSync(portableCandidate)) return portableCandidate;
 
-    // Tier 1: PATH search
-    try {
-      if (IS_WINDOWS) {
-        const r = execSync('where codex.cmd 2>nul || where codex.exe 2>nul || where codex 2>nul', {
-          encoding: 'utf-8', timeout: 5000,
-        });
-        return r.split(/\r?\n/)[0].trim();
-      } else {
-        return execSync('which codex', { encoding: 'utf-8', timeout: 5000 }).trim();
-      }
-    } catch {}
+    // Tier 1: PATH search via a codepage-safe lookup (whereBinary forces UTF-8
+    // output + verifies existence so a non-ASCII/Chinese username isn't mangled
+    // into an ENOENT; it also no longer returns an empty string on a miss, which
+    // used to short-circuit the Node-derived fallback tiers below).
+    const viaWhere = whereBinary('codex');
+    if (viaWhere) return viaWhere;
 
     // Tier 2: Next to current Node.js interpreter (npm global)
     const nodeBinDir = path.dirname(process.execPath);
@@ -168,7 +166,7 @@ class CodexAdapter extends BaseAdapter {
   }
 
   _buildSystemContext(channelName) {
-    return buildOpenclawSystemPrompt({
+    const base = buildOpenclawSystemPrompt({
       agentName: this.agentName,
       workspaceId: this.workspaceId,
       channelName,
@@ -177,6 +175,38 @@ class CodexAdapter extends BaseAdapter {
       mode: this._mode,
       disabledModules: this.disabledModules,
     });
+    const skillsSection = this._buildInstalledSkillsSection();
+    return skillsSection ? `${base}\n\n${skillsSection}` : base;
+  }
+
+  /**
+   * Codex has no native skills-directory discovery (unlike Claude Code), so
+   * we inject installed Skill Hub skills directly into its context. Each
+   * skill's SKILL.md lives at <workingDir>/.codex/skills/<id>/SKILL.md and
+   * Codex (running with cwd=workingDir, full file access) can read it.
+   */
+  _buildInstalledSkillsSection() {
+    let skills = [];
+    try {
+      const installer = require('../skill-installer');
+      skills = installer.listInstalledSkills({
+        agentType: this.agentType || 'codex',
+        workingDir: this.workingDir,
+      });
+    } catch {
+      return '';
+    }
+    if (!skills.length) return '';
+    const lines = skills.map((s) => {
+      const desc = s.description ? ` — ${s.description}` : '';
+      return `- **${s.name}** (\`${s.id}\`)${desc}\n  Read its instructions: \`cat ${s.skillMd}\``;
+    });
+    return (
+      '## Installed Skills\n' +
+      'You have the following skills installed. When a task matches a skill, ' +
+      'read its `SKILL.md` (via the `cat` command shown) and follow it:\n' +
+      lines.join('\n')
+    );
   }
 
   // ------------------------------------------------------------------
@@ -205,14 +235,17 @@ class CodexAdapter extends BaseAdapter {
     } catch {}
   }
 
-  async _onControlAction(action, _payload) {
+  async _onControlAction(action, payload) {
     if (action === 'stop') {
       for (const [channel, proc] of Object.entries(this._channelProcesses)) {
         await this._stopProcess(proc);
         delete this._channelProcesses[channel];
         try { await this.sendStatus(channel, 'Execution stopped by user'); } catch {}
       }
+      return;
     }
+    // Shared actions (status, routines, skill.install, skill.uninstall).
+    await super._onControlAction(action, payload);
   }
 
   // ------------------------------------------------------------------
@@ -235,7 +268,7 @@ class CodexAdapter extends BaseAdapter {
     } else if (this._directMode) {
       await this._handleViaDirectApi(content, msgChannel);
     } else {
-      await this.sendError(msgChannel, 'codex CLI not found. Install with: npm install -g @openai/codex');
+      await this.sendError(msgChannel, 'codex CLI not found. Install with: npm install -g @openai/codex\n\nOr configure OPENAI_API_KEY + OPENAI_BASE_URL for direct API mode.');
     }
   }
 

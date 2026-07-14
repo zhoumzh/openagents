@@ -6,17 +6,20 @@ POST /v1/events    Send any event into the mod pipeline
 GET  /v1/events    Poll events (filter by after, target, channel, type)
 """
 
+import asyncio
 import hashlib
+import json as _json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import and_, case, cast, func, or_, select, Text
 from sqlalchemy.orm import Session
 
 from app import cache
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.models import Channel, ChannelMember, EventRecord, Workspace
 from app.pipeline_factory import pipeline
 from app.response import ResponseCode, json_response, success_response
@@ -44,6 +47,130 @@ class SendEventRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Poll-cache invalidation
+# ---------------------------------------------------------------------------
+
+def _poll_cache_keys_for(workspace_id: str, event_type: str = ""):
+    """Return the (head_tracker_key, at_head_key) pairs that should be
+    invalidated when a new event is persisted in *workspace_id*.
+
+    Agents poll with a small set of well-known filter combinations.
+    Rather than a wildcard scan we enumerate the patterns the adapters
+    actually use:
+
+    1. ``type=workspace.message.posted, sort=asc, limit=500`` — the
+       main message poll in ``workspace-client.js:pollPending``.
+    2. ``type=workspace.agent.control, target=openagents:*, sort=asc,
+       limit=50`` — the control-event poll.
+    3. The same as (1) with ``sort=desc, limit=1`` — ``getHeadEventId``.
+
+    We also include variants with common limits (50, 100, 500) and both
+    sort orders so we don't miss any.
+    """
+    keys = []
+
+    # Build the same filter_parts the poll endpoint uses:
+    #   [workspace_id, target, channel, type, conversation, sort, limit]
+    common_filters = []
+
+    if event_type.startswith("workspace.message"):
+        for sort in ("asc",):
+            for limit in (500,):
+                common_filters.append(
+                    (workspace_id, "", "", "workspace.message.posted", "", sort, str(limit))
+                )
+        # getHeadEventId uses sort=desc, limit=1
+        common_filters.append(
+            (workspace_id, "", "", "workspace.message.posted", "", "desc", "1")
+        )
+
+    elif event_type.startswith("workspace.agent.control"):
+        for limit in (50, 500):
+            common_filters.append(
+                (workspace_id, "", "", "workspace.agent.control", "", "asc", str(limit))
+            )
+
+    # Always invalidate the untyped "all events" poll pattern too
+    for sort in ("asc", "desc"):
+        for limit in (50, 500):
+            common_filters.append(
+                (workspace_id, "", "", "", "", sort, str(limit))
+            )
+
+    for parts in common_filters:
+        fh = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+        keys.append(("v1events:head:" + fh, "v1events:athead:" + fh))
+
+    return keys
+
+
+def _invalidate_poll_cache(workspace_id: str, event_type: str = ""):
+    """Delete head-tracker and at-head cache entries so polling agents
+    see newly posted events immediately instead of receiving a stale
+    cached-empty response."""
+    for head_key, athead_key in _poll_cache_keys_for(workspace_id, event_type):
+        try:
+            cache.delete_key(head_key)
+        except Exception:
+            pass
+        try:
+            cache.delete_key(athead_key)
+        except Exception:
+            pass
+
+
+def _resolve_and_auth_cached(db, network, token, authorization):
+    """Resolve a workspace id and authorize the caller, serving the
+    workspace-token path from Redis so the hot poll path never touches
+    Postgres when the client is already at head.
+
+    Returns ``(workspace_id, error_response)`` — exactly one is non-None.
+
+    Only the workspace-token path (the one agents use, `token ==
+    password_hash`) is cache-served. Bearer/collaborator auth, cache misses,
+    and token mismatches fall through to the DB and repopulate the cache.
+    We store a SHA-256 of the token (not the token itself) and a short TTL so
+    a rotated/revoked token is honored within the window; freshness of *events*
+    is unaffected because the head/at-head caches are still invalidated on every
+    post.
+    """
+    ck = "v1ws:resolve:" + hashlib.sha1(network.encode("utf-8")).hexdigest()
+    cached = cache.get_bytes(ck)
+    if cached is not None:
+        try:
+            meta = _json.loads(cached)
+        except Exception:
+            meta = None
+        if meta and meta.get("id"):
+            ph_sha = meta.get("ph_sha")
+            if ph_sha is None:
+                # Public workspace (no password) — token path grants access.
+                return meta["id"], None
+            if token and hashlib.sha256(token.encode("utf-8")).hexdigest() == ph_sha:
+                return meta["id"], None
+            # token missing/mismatch → fall through for bearer/collaborator auth
+
+    workspace = db.execute(
+        select(Workspace).where(_workspace_filter(network))
+    ).scalar_one_or_none()
+    if not workspace:
+        return None, json_response(ResponseCode.NOT_FOUND, "Network not found")
+    if not _verify_workspace_access(workspace, token, authorization):
+        return None, json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+
+    ph = workspace.password_hash
+    meta = {
+        "id": str(workspace.id),
+        "ph_sha": hashlib.sha256(ph.encode("utf-8")).hexdigest() if ph else None,
+    }
+    try:
+        cache.set_bytes(ck, _json.dumps(meta).encode("utf-8"), ttl_seconds=30.0)
+    except Exception:
+        pass
+    return str(workspace.id), None
+
+
+# ---------------------------------------------------------------------------
 # POST /v1/events — send an event through the pipeline
 # ---------------------------------------------------------------------------
 
@@ -55,8 +182,9 @@ def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
 
 
 @router.post("/events")
-async def send_event(
+def send_event(
     body: SendEventRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
@@ -66,6 +194,10 @@ async def send_event(
 
     The event flows through mod/auth → mod/workspace → mod/persistence
     before delivery to the target.
+
+    Deliberately a `def` handler (threadpool): the pipeline's DB writes,
+    pool-checkout waits, and the sync LLM routing call must never run on
+    the event loop — see _emit_event_blocking in routers/network.py.
     """
     if not body.network:
         return json_response(ResponseCode.BAD_REQUEST, "Missing required field: network")
@@ -99,11 +231,19 @@ async def send_event(
         bearer_token=_extract_bearer(authorization),
     )
 
-    # Run through pipeline
+    # Run through pipeline (fresh loop in this worker thread — pipeline is
+    # async-shaped but contains only sync I/O, nothing bound to the main loop)
     try:
-        result = await pipeline.process(event, context)
-    except EventRejected:
-        return json_response(ResponseCode.UNAUTHORIZED, "Event rejected by pipeline")
+        result = asyncio.run(pipeline.process(event, context))
+    except EventRejected as exc:
+        # Surface the reason so clients can roll back optimistic UI on
+        # specific failures (e.g. routine_channel_locked,
+        # channel_join_forbidden). 403 distinguishes "you can't do this"
+        # from generic auth failures.
+        reason = exc.reason or "rejected"
+        code = ResponseCode.FORBIDDEN if "forbidden" in reason or "locked" in reason \
+            else ResponseCode.UNAUTHORIZED
+        return json_response(code, reason)
 
     # Session revocation: another client has since joined as this agent.
     # Return a clear error so the stale client can stop its adapter.
@@ -116,11 +256,55 @@ async def send_event(
 
     db.commit()
 
+    # Fan out push notifications for relevant events. Runs after the
+    # response is sent (FastAPI BackgroundTasks); never blocks event
+    # creation; failures are logged but never raised. The service opens
+    # its own short-lived DB session because `db` here is request-scoped.
+    from app.services.push import fanout_for_event
+    event_snapshot = {
+        "id": result.id,
+        "type": result.type,
+        "source": result.source,
+        "target": result.target,
+        "payload": result.payload,
+        "metadata": result.metadata,
+        "timestamp": result.timestamp,
+    }
+    background_tasks.add_task(fanout_for_event, str(workspace.id), event_snapshot)
+
+    # Invalidate poll cache head-trackers for this workspace so that
+    # agents polling with `after=<head>` don't keep getting a stale
+    # cached-empty response.  We delete every `v1events:head:*` and
+    # `v1events:athead:*` key that could match ANY filter combination
+    # for this workspace.  Because the filter hash includes
+    # workspace.id as the first component, a wildcard scan would be
+    # expensive — instead we invalidate the two most common poll
+    # patterns that agents use (workspace-wide message poll and
+    # per-agent control poll).
+    try:
+        _invalidate_poll_cache(str(workspace.id), result.type)
+    except Exception:
+        pass
+
+    try:
+        cache.publish_event(
+            f"ws:{workspace.id}:events",
+            _json.dumps(event_snapshot, default=str, separators=(",", ":")).encode(),
+        )
+    except Exception:
+        pass
+
+    # Invoke cloud agents if any are targeted by this message.
+    if result.type == "workspace.message.posted":
+        from app.services.cloud_agent import invoke_cloud_agents
+        background_tasks.add_task(invoke_cloud_agents, str(workspace.id), event_snapshot)
+
     return success_response({
         "id": result.id,
         "type": result.type,
         "source": result.source,
         "target": result.target,
+        "payload": result.payload,
         "timestamp": result.timestamp,
         "metadata": result.metadata,
     })
@@ -131,18 +315,19 @@ async def send_event(
 # ---------------------------------------------------------------------------
 
 @router.get("/events")
-async def poll_events(
+def poll_events(
     network: str = Query(..., description="Network (workspace) ID or slug"),
     after: Optional[str] = Query(None, description="Return events after this event ID"),
     before: Optional[str] = Query(None, description="Return events before this event ID"),
     target: Optional[str] = Query(None, description="Filter by target address"),
     channel: Optional[str] = Query(None, description="Filter by channel name"),
     type: Optional[str] = Query(None, description="Filter by event type prefix"),
+    target_agents: Optional[str] = Query(None, description="Filter to events routed to this agent (metadata.target_agents contains it, plus untargeted events). Server-side counterpart of the adapter's client-side target filter."),
     conversation: Optional[str] = Query(None, description="Filter to DM conversation between two agents (comma-separated addresses)"),
     search: Optional[str] = Query(None, description="Search message content (case-insensitive)"),
     member: Optional[str] = Query(None, description="Filter to channels where this agent is a member"),
     sort: Optional[str] = Query(None, description="Sort order: 'asc' (default) or 'desc'"),
-    limit: int = Query(50, ge=1, le=200, description="Max events to return"),
+    limit: int = Query(50, ge=1, le=500, description="Max events to return"),
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
@@ -153,16 +338,13 @@ async def poll_events(
     Supports filtering by target, channel, type, and cursor-based pagination
     using the `after` parameter (event ID — events are sorted by timestamp).
     """
-    # Resolve workspace
-    workspace = db.execute(
-        select(Workspace).where(_workspace_filter(network))
-    ).scalar_one_or_none()
-
-    if not workspace:
-        return json_response(ResponseCode.NOT_FOUND, "Network not found")
-
-    if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+    # Resolve workspace + authorize. Served from Redis for the workspace-token
+    # path so an at-head poll (the common idle case) never checks out a Postgres
+    # connection — the DB `SELECT workspace` used to run on every poll, before
+    # the cache, so even a cached-empty response cost a pooled connection.
+    workspace_id, err = _resolve_and_auth_cached(db, network, x_workspace_token, authorization)
+    if err is not None:
+        return err
 
     # Two-level read-through cache for poll traffic.
     #
@@ -185,9 +367,13 @@ async def poll_events(
     at_head_key = None
     head_tracker_key = None
     incoming_after = after or ""
-    if not search and not member:
+    # `target_agents` is a per-agent filter — every agent sends a distinct
+    # value, which would explode the head-tracker key space (invalidation
+    # enumerates a fixed set of filter combos, not agent names). Skip the
+    # cache for these polls, same as `member`; the filtered query is cheap.
+    if not search and not member and not target_agents:
         key_parts = [
-            str(workspace.id), target or "", channel or "",
+            workspace_id, target or "", channel or "",
             type or "", conversation or "",
             after or "", before or "",
             sort or "asc", str(limit),
@@ -199,7 +385,7 @@ async def poll_events(
         # Per-filter head cursor marker (what the newest event id was for
         # this filter the last time we saw any events). Cursor-free.
         filter_parts = [
-            str(workspace.id), target or "", channel or "",
+            workspace_id, target or "", channel or "",
             type or "", conversation or "",
             sort or "asc", str(limit),
         ]
@@ -233,13 +419,13 @@ async def poll_events(
                         except Exception:
                             pass
 
-    query = select(EventRecord).where(EventRecord.network_id == workspace.id)
+    query = select(EventRecord).where(EventRecord.network_id == workspace_id)
 
     # Filter events to only channels where the agent is a member
     if member:
         member_channel_names = db.execute(
             select(Channel.name).where(
-                Channel.workspace_id == workspace.id,
+                Channel.workspace_id == workspace_id,
                 Channel.id.in_(
                     select(ChannelMember.channel_id).where(ChannelMember.agent_name == member)
                 ),
@@ -300,11 +486,76 @@ async def poll_events(
     if type:
         query = query.where(EventRecord.type.startswith(type))
 
+    if target_agents:
+        # Return only events routed to this agent — mirrors the adapter's
+        # client-side `target_agents` filter so agents stop pulling the whole
+        # network's traffic and discarding ~(N-1)/N of it.
+        #
+        # The set matches exactly what the adapter keeps (verified against live
+        # traffic — this filter == the client filter for every agent):
+        #   • events whose metadata.target_agents contains this agent, PLUS
+        #   • *untargeted human* messages (no target_agents key) — the adapter
+        #     broadcasts those.
+        # Untargeted *agent/system* messages are the bulk of a busy workspace's
+        # traffic (agent-to-agent chatter) and the adapter always discards them
+        # when they carry no target list, so returning them was the difference
+        # between "filter is correct" and "filter actually reduces load". They
+        # are excluded here. Events targeted at *other* agents and the
+        # `["__no_response__"]` sentinel are excluded too.
+        if db.bind.dialect.name == "postgresql":
+            # `@>` array containment (GIN-friendly); `? 'target_agents'` detects
+            # the untargeted case, scoped to human senders.
+            query = query.where(
+                or_(
+                    EventRecord.metadata_.contains({"target_agents": [target_agents]}),
+                    and_(
+                        EventRecord.source.startswith("human:"),
+                        ~EventRecord.metadata_.has_key("target_agents"),
+                    ),
+                )
+            )
+        else:
+            # SQLite (tests): no JSONB operators — fall back to a text match.
+            # Over-inclusive on the containment side but safe; the adapter
+            # re-filters client-side.
+            meta_text = cast(EventRecord.metadata_, Text)
+            query = query.where(
+                or_(
+                    meta_text.like(f'%"{target_agents}"%'),
+                    and_(
+                        EventRecord.source.startswith("human:"),
+                        meta_text.notlike('%target_agents%'),
+                    ),
+                )
+            )
+
     if search:
         # Search within payload JSON for content field (works with both JSONB and JSON)
         query = query.where(
             cast(EventRecord.payload, Text).ilike(f"%{search}%")
         )
+
+    # Head-cursor snapshot for target_agents polls. When we filter to one
+    # agent's events, the last *returned* event can lag far behind the stream
+    # tip (most traffic is for other agents), so a naive "cursor = last event"
+    # would make the agent re-scan the same range every poll — reintroducing
+    # the O(traffic) scan we're trying to remove. Capture the tip of the
+    # *unfiltered* (network+type[+channel/target]) stream BEFORE running the
+    # main query so the client can skip past other agents' events once it has
+    # drained its own. Snapshotting first guarantees we never advance past an
+    # event the main query didn't get to see (at worst a harmless re-scan).
+    head_id_snapshot = None
+    if target_agents:
+        head_q = select(EventRecord.id).where(EventRecord.network_id == workspace_id)
+        if type:
+            head_q = head_q.where(EventRecord.type.startswith(type))
+        if channel:
+            head_q = head_q.where(EventRecord.target == f"channel/{channel}")
+        elif target:
+            head_q = head_q.where(EventRecord.target == target)
+        head_id_snapshot = db.execute(
+            head_q.order_by(EventRecord.timestamp.desc(), EventRecord.id.desc()).limit(1)
+        ).scalar()
 
     if sort == "desc":
         query = query.order_by(EventRecord.timestamp.desc(), EventRecord.id.desc()).limit(limit + 1)
@@ -315,7 +566,12 @@ async def poll_events(
     has_more = len(rows) > limit
     events = rows[:limit]
 
-    response = success_response({
+    composing = False
+    if not search and not conversation:
+        from app.composing import has_any_composing
+        composing = has_any_composing(workspace_id)
+
+    response_data = {
         "events": [
             {
                 "id": e.id,
@@ -332,7 +588,21 @@ async def poll_events(
         "has_more": has_more,
         "oldest_id": (events[-1].id if sort == "desc" else events[0].id) if events else None,
         "newest_id": (events[0].id if sort == "desc" else events[-1].id) if events else None,
-    })
+    }
+    if target_agents:
+        # Cursor the agent should resume from. If more of *its own* events
+        # remain (has_more), continue from the last one returned; otherwise
+        # jump to the stream tip so it skips past other agents' traffic
+        # instead of re-scanning it next poll. Additive field — older clients
+        # ignore it and fall back to newest_id.
+        next_cursor = response_data["newest_id"]
+        if not has_more and head_id_snapshot:
+            next_cursor = head_id_snapshot
+        response_data["next_cursor"] = next_cursor
+    if composing:
+        response_data["composing"] = True
+
+    response = success_response(response_data)
 
     # Populate cache for subsequent polls within the TTL window.
     # success_response returns a dict; Redis stores the serialized JSON.
@@ -387,7 +657,7 @@ async def poll_events(
 # ---------------------------------------------------------------------------
 
 @router.get("/events/conversations")
-async def list_conversations(
+def list_conversations(
     network: str = Query(..., description="Network (workspace) ID or slug"),
     agent: Optional[str] = Query(None, description="Filter to conversations involving this agent"),
     limit: int = Query(20, ge=1, le=100),
@@ -483,7 +753,7 @@ async def list_conversations(
 # ---------------------------------------------------------------------------
 
 @router.get("/events/latest-per-channel")
-async def latest_per_channel(
+def latest_per_channel(
     network: str = Query(..., description="Network (workspace) ID or slug"),
     type: Optional[str] = Query("workspace.message", description="Event type prefix to filter"),
     db: Session = Depends(get_db),
@@ -544,3 +814,84 @@ async def latest_per_channel(
         }
 
     return success_response({"channels": channels})
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/events/stream — Server-Sent Events
+# ---------------------------------------------------------------------------
+
+@router.get("/events/stream")
+async def stream_events(
+    request: Request,
+    network: str = Query(...),
+    channel: Optional[str] = Query(None),
+    token: Optional[str] = Query(None),
+    x_workspace_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    """Stream new events via Server-Sent Events (SSE).
+
+    Uses Redis pub/sub under the hood. Falls back gracefully — if Redis
+    is unavailable the connection closes and the client should fall back
+    to polling.
+    """
+    effective_token = x_workspace_token or token
+
+    # Verify access with a SHORT-LIVED session that is closed BEFORE we start
+    # streaming. SSE streams live for minutes/hours; a Depends(get_db) session
+    # would stay checked out — and idle-in-transaction, from the verify query
+    # below — for the whole stream, pinning a pooled connection per client and
+    # exhausting the pool. The generator below reads only from Redis, so no DB
+    # session is needed once access is verified.
+    db = SessionLocal()
+    try:
+        workspace = db.execute(
+            select(Workspace).where(_workspace_filter(network))
+        ).scalar_one_or_none()
+        if not workspace:
+            return json_response(ResponseCode.NOT_FOUND, "Network not found")
+        if not _verify_workspace_access(workspace, effective_token, authorization):
+            return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        workspace_id = str(workspace.id)
+    finally:
+        db.close()
+    target_prefix = f"channel/{channel}" if channel else None
+
+    async def event_generator():
+        keepalive_interval = 30
+        last_keepalive = asyncio.get_event_loop().time()
+
+        # subscribe_events yields raw event bytes, plus None on idle ticks
+        # (~1/s). The idle tick is what lets us emit keepalives and notice a
+        # disconnected client during long quiet periods — previously both were
+        # gated behind an actual event arriving, so a silent stream sent zero
+        # bytes and proxies dropped the connection, leaving clients stuck on
+        # "thinking…".
+        async for data in cache.subscribe_events(f"ws:{workspace_id}:events"):
+            if await request.is_disconnected():
+                break
+
+            if data is not None:
+                try:
+                    event = _json.loads(data)
+                    if not (target_prefix and event.get("target", "") != target_prefix):
+                        event_id = event.get("id", "")
+                        yield f"id: {event_id}\ndata: {data.decode()}\n\n"
+                        last_keepalive = asyncio.get_event_loop().time()
+                except Exception:
+                    pass
+
+            now = asyncio.get_event_loop().time()
+            if now - last_keepalive >= keepalive_interval:
+                yield ": keepalive\n\n"
+                last_keepalive = now
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
