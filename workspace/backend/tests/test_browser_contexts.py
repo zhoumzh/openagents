@@ -8,6 +8,7 @@ BrowserManager is mocked since we don't run real Browserbase sessions in tests.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from app.browser import BrowserOpenError
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +256,31 @@ class TestOpenTabWithContext:
         }, headers={"X-Workspace-Token": ws["token"]})
         assert resp.status_code == 404
         assert "context not found" in resp.json()["message"].lower()
+
+
+class TestOpenTabErrors:
+    """POST /v1/browser/tabs error reporting"""
+
+    @patch("app.routers.browser.BrowserManager")
+    def test_open_tab_returns_actionable_browser_open_error(self, MockManager, client):
+        ws = _create_workspace(client)
+        manager = _mock_manager()
+        manager.open_tab = AsyncMock(side_effect=BrowserOpenError(
+            "Local Chromium is not installed. Run `python -m playwright install chromium` "
+            "from the backend environment."
+        ))
+        MockManager.get.return_value = manager
+
+        resp = client.post("/v1/browser/tabs", json={
+            "url": "about:blank",
+            "network": ws["id"],
+            "source": "human:user",
+        }, headers={"X-Workspace-Token": ws["token"]})
+
+        assert resp.status_code == 500
+        body = resp.json()
+        assert body["code"] == 500
+        assert "playwright install chromium" in body["message"]
 
 
 class TestUnpersistTab:
